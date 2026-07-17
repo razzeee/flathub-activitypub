@@ -41,6 +41,22 @@ export class AppRepository {
   async get(appId: string): Promise<AppProfile | null> {
     return (await this.kv.get<AppProfile>(["app", appId])).value;
   }
+
+  async listRecent(limit = 50): Promise<AppProfile[]> {
+    const profiles: AppProfile[] = [];
+    for await (
+      const entry of this.kv.list<boolean>(
+        { prefix: ["appByUpdatedAt"] },
+        { limit, reverse: true },
+      )
+    ) {
+      const appId = entry.key[2];
+      if (typeof appId !== "string") continue;
+      const profile = await this.get(appId);
+      if (profile) profiles.push(profile);
+    }
+    return profiles;
+  }
 }
 
 export class ReleaseRepository {

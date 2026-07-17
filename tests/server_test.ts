@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import type { Config } from "../src/config.ts";
 import { createRepositories } from "../src/store/kv_store.ts";
 import { handler } from "../src/server.ts";
@@ -52,6 +52,97 @@ Deno.test("actor and WebFinger routes expose ingested app", async () => {
     );
     const wf = await wfResponse.json();
     assertEquals(wf.subject, "acct:org.mozilla.firefox@example.org");
+  } finally {
+    kv.close();
+  }
+});
+
+Deno.test("browser pages list apps and inline releases", async () => {
+  const kv = await Deno.openKv(":memory:");
+  try {
+    const repos = createRepositories(kv);
+    await repos.apps.upsertFromHit({
+      appId: "org.mozilla.firefox",
+      name: "Firefox",
+      summary: "A web browser",
+      updatedAt: 100,
+    });
+    await repos.releases.createPostIfAbsent({
+      appId: "org.mozilla.firefox",
+      fingerprint: "abc123",
+      version: "1.0.0",
+      timestamp: "100",
+      date: "1970-01-01",
+      type: "stable",
+      urgency: "medium",
+      descriptionHtml: "<p>Release notes</p>",
+      firstSeenAt: "1970-01-01T00:00:00.000Z",
+    }, {
+      appId: "org.mozilla.firefox",
+      releaseFingerprint: "abc123",
+      noteId: "https://example.org/apps/org.mozilla.firefox/releases/abc123",
+      createActivityId:
+        "https://example.org/apps/org.mozilla.firefox/releases/abc123#create",
+      contentHtml: "<p><strong>Firefox 1.0.0</strong> was released.</p>",
+      publishedAt: "1970-01-01T00:01:40.000Z",
+      deliveryState: "queued",
+    });
+    const app = {
+      config,
+      repos,
+      ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
+      federation: createFedifyFederation(config, kv),
+    };
+    const serve = handler(app);
+
+    const landingResponse = await serve(new Request("https://example.org/"));
+    const landing = await landingResponse.text();
+    assertEquals(landingResponse.status, 200);
+    assertStringIncludes(landing, "Release notes with Fediverse addresses");
+    assertStringIncludes(landing, "@org.mozilla.firefox@example.org");
+
+    const appResponse = await serve(
+      new Request("https://example.org/apps/org.mozilla.firefox"),
+    );
+    const appHtml = await appResponse.text();
+    assertEquals(appResponse.status, 200);
+    assertStringIncludes(appHtml, "A web browser");
+    assertStringIncludes(appHtml, 'id="release-abc123"');
+    assertStringIncludes(appHtml, "Firefox 1.0.0");
+
+    const releaseResponse = await serve(
+      new Request(
+        "https://example.org/apps/org.mozilla.firefox/releases/abc123",
+      ),
+    );
+    assertEquals(releaseResponse.status, 303);
+    assertEquals(
+      releaseResponse.headers.get("location"),
+      "/apps/org.mozilla.firefox#release-abc123",
+    );
+
+    const noteResponse = await serve(
+      new Request(
+        "https://example.org/apps/org.mozilla.firefox/releases/abc123",
+        {
+          headers: { accept: "application/activity+json" },
+        },
+      ),
+    );
+    const note = await noteResponse.json();
+    assertEquals(noteResponse.status, 200);
+    assertEquals(note.type, "Note");
+
+    const followResponse = await serve(
+      new Request(
+        "https://example.org/apps/org.mozilla.firefox?follow=1&server=mastodon.social",
+      ),
+    );
+    assertEquals(followResponse.status, 303);
+    assertEquals(
+      followResponse.headers.get("location"),
+      "https://mastodon.social/authorize_interaction?uri=acct%3Aorg.mozilla.firefox%40example.org",
+    );
   } finally {
     kv.close();
   }

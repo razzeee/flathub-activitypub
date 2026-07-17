@@ -8,6 +8,7 @@ import {
 import { DenoKvMessageQueue, DenoKvStore } from "@fedify/denokv";
 import {
   Accept,
+  Announce,
   Create,
   Endpoints,
   Follow,
@@ -20,6 +21,8 @@ import {
   Undo,
 } from "@fedify/vocab";
 import type { Config } from "../config.ts";
+import { announceActivityId, appActorSummary } from "./activity.ts";
+import { getCollectionActor } from "./collections.ts";
 import type { Repositories } from "../store/kv_store.ts";
 
 interface JwkKeyPairRecord {
@@ -46,15 +49,18 @@ export function createFedifyFederation(
   federation
     .setActorDispatcher("/apps/{identifier}", async (ctx, identifier) => {
       const profile = await ctx.data.repos.apps.get(identifier);
-      if (!profile) return null;
+      const collection = getCollectionActor(identifier);
+      if (!profile && !collection) return null;
       const keys = await ctx.getActorKeyPairs(identifier);
       return new Service({
         id: ctx.getActorUri(identifier),
         preferredUsername: identifier,
-        name: profile.name,
-        summary: `Flathub changelog posts for ${profile.name}.`,
-        url: new URL(profile.flathubUrl),
-        icon: profile.iconUrl
+        name: profile?.name ?? collection?.name,
+        summary: profile ? appActorSummary(profile) : collection?.summary,
+        url: new URL(
+          profile?.flathubUrl ?? `${config.origin}/apps/${identifier}`,
+        ),
+        icon: profile?.iconUrl
           ? new Image({ url: new URL(profile.iconUrl) })
           : undefined,
         inbox: ctx.getInboxUri(identifier),
@@ -74,7 +80,8 @@ export function createFedifyFederation(
       "/apps/{identifier}/followers",
       async (ctx, identifier, _cursor, baseUri) => {
         const profile = await ctx.data.repos.apps.get(identifier);
-        if (!profile) return null;
+        const collection = getCollectionActor(identifier);
+        if (!profile && !collection) return null;
         let followers = await ctx.data.repos.followers.list(identifier);
         if (baseUri != null) {
           followers = followers.filter((follower) =>
@@ -96,9 +103,42 @@ export function createFedifyFederation(
     "/apps/{identifier}/outbox",
     async (ctx, identifier) => {
       const profile = await ctx.data.repos.apps.get(identifier);
-      if (!profile) return null;
       const actor = ctx.getActorUri(identifier);
       const followers = ctx.getFollowersUri(identifier);
+      const collection = getCollectionActor(identifier);
+      if (collection?.type === "post") {
+        const posts = await ctx.data.repos.releases.listRecentPosts(
+          collection.postKind,
+        );
+        return {
+          items: posts.map((post) =>
+            new Announce({
+              id: new URL(announceActivityId(post, collection.id)),
+              actor,
+              to: PUBLIC_COLLECTION,
+              cc: followers,
+              object: new URL(post.noteId),
+            })
+          ),
+        };
+      }
+      if (collection?.type === "app-list") {
+        const apps = await ctx.data.repos.feeds.listAppProfiles(collection.id);
+        return {
+          items: apps.map((app) =>
+            new Announce({
+              id: new URL(
+                `${actor.href}/announces/${encodeURIComponent(app.appId)}`,
+              ),
+              actor,
+              to: PUBLIC_COLLECTION,
+              cc: followers,
+              object: ctx.getActorUri(app.appId),
+            })
+          ),
+        };
+      }
+      if (!profile) return null;
       const posts = await ctx.data.repos.releases.listPosts(identifier);
       return {
         items: posts.map((post) =>
@@ -128,7 +168,8 @@ export function createFedifyFederation(
       const parsed = ctx.parseUri(follow.objectId);
       if (parsed?.type !== "actor") return;
       const profile = await ctx.data.repos.apps.get(parsed.identifier);
-      if (!profile) return;
+      const collection = getCollectionActor(parsed.identifier);
+      if (!profile && !collection) return;
       const follower = await follow.getActor(ctx);
       if (
         !isActor(follower) || follower.id == null || follower.inboxId == null

@@ -1,9 +1,12 @@
+import type { FlathubCollectionName } from "../federation/collections.ts";
+
 export interface RecentlyUpdatedHit {
   appId: string;
   name: string;
   summary?: string;
   iconUrl?: string;
   updatedAt: number;
+  addedAt?: number;
 }
 
 export interface RecentlyUpdatedPage {
@@ -28,6 +31,7 @@ export interface AppstreamApp {
   appId: string;
   name?: string;
   summary?: string;
+  description?: string;
   iconUrl?: string;
   releases: AppstreamRelease[];
 }
@@ -42,7 +46,22 @@ export class FlathubClient {
     page: number,
     perPage: number,
   ): Promise<RecentlyUpdatedPage> {
-    const url = new URL(`${this.apiBase}/collection/recently-updated`);
+    return await this.collection("recently-updated", page, perPage);
+  }
+
+  async recentlyAdded(
+    page: number,
+    perPage: number,
+  ): Promise<RecentlyUpdatedPage> {
+    return await this.collection("recently-added", page, perPage);
+  }
+
+  async collection(
+    collection: FlathubCollectionName,
+    page: number,
+    perPage: number,
+  ): Promise<RecentlyUpdatedPage> {
+    const url = new URL(`${this.apiBase}/collection/${collection}`);
     url.searchParams.set("page", String(page));
     url.searchParams.set("per_page", String(perPage));
     url.searchParams.set("locale", "en");
@@ -88,6 +107,7 @@ export function parseAppstreamApp(appId: string, input: unknown): AppstreamApp {
     appId,
     name: asOptionalString(input.name),
     summary: asOptionalString(input.summary),
+    description: asOptionalString(input.description),
     iconUrl: asOptionalString(input.icon),
     releases: Array.isArray(input.releases)
       ? input.releases.map(parseRelease)
@@ -103,6 +123,7 @@ function parseRecentlyUpdatedHit(input: unknown): RecentlyUpdatedHit {
     summary: asOptionalString(input.summary),
     iconUrl: asOptionalString(input.icon),
     updatedAt: asNumber(input.updated_at, 0),
+    addedAt: asOptionalNumber(input.added_at),
   };
 }
 
@@ -150,6 +171,12 @@ function asOptionalString(value: unknown): string | undefined {
 
 function asNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function delay(ms: number): Promise<void> {

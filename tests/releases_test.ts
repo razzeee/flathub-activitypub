@@ -1,7 +1,9 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import {
   buildNoteContent,
+  latestRelease,
   normalizeRelease,
+  releasePublishedAt,
   sanitizeHtml,
 } from "../src/releases.ts";
 
@@ -75,4 +77,36 @@ Deno.test("buildNoteContent includes release and Flathub link", async () => {
   const html = buildNoteContent("Example", "org.example.App", release);
   assert(html.includes("Example 1.2"));
   assert(html.includes("https://flathub.org/apps/org.example.App"));
+  assert(html.includes("#Flathub #LinuxApps"));
+});
+
+Deno.test("latestRelease ignores future-dated releases", async () => {
+  const now = new Date("2026-07-17T12:00:00.000Z");
+  const current = await normalizeRelease("io.github.ezQuake", {
+    version: "3.6.9",
+    timestamp: "1772323200",
+    description: "<p>Current</p>",
+  });
+  const future = await normalizeRelease("io.github.ezQuake", {
+    version: "3.6.7",
+    timestamp: "1789430400",
+    description: "<p>Future metadata</p>",
+  });
+
+  assert(current);
+  assert(future);
+  assertEquals(latestRelease([current, future], now)?.version, "3.6.9");
+  assertEquals(latestRelease([future], now), undefined);
+});
+
+Deno.test("releasePublishedAt does not return a future instant", async () => {
+  const fallback = new Date("2026-07-17T12:00:00.000Z");
+  const release = await normalizeRelease("io.github.ezQuake", {
+    version: "3.6.7",
+    timestamp: "1789430400",
+    description: "<p>Future metadata</p>",
+  });
+
+  assert(release);
+  assertEquals(releasePublishedAt(release, fallback), fallback.toISOString());
 });

@@ -10,15 +10,30 @@ if (import.meta.main) {
   const handle = handler(app);
 
   const queueController = new AbortController();
-  Deno.addSignalListener("SIGINT", () => queueController.abort());
-  Deno.addSignalListener("SIGTERM", () => queueController.abort());
-  app.federation.startQueue(
+  const serverController = new AbortController();
+  let crawlTimer: ReturnType<typeof setInterval> | undefined;
+  let shuttingDown = false;
+
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logEvent("server.shutdown", { signal });
+    if (crawlTimer != null) clearInterval(crawlTimer);
+    queueController.abort();
+    serverController.abort();
+  };
+
+  Deno.addSignalListener("SIGINT", () => shutdown("SIGINT"));
+  Deno.addSignalListener("SIGTERM", () => shutdown("SIGTERM"));
+  const queue = app.federation.startQueue(
     { repos: app.repos },
     { signal: queueController.signal },
-  ).catch((error) => logError("fedify_queue.failed", error));
+  ).catch((error) => {
+    if (!queueController.signal.aborted) logError("fedify_queue.failed", error);
+  });
 
   if (config.crawlIntervalSeconds > 0) {
-    setInterval(() => {
+    crawlTimer = setInterval(() => {
       app.ingestor.poll().catch((error) =>
         logError("scheduled_crawl.failed", error)
       );
@@ -26,7 +41,15 @@ if (import.meta.main) {
   }
 
   logEvent("server.start", { origin: config.origin, port: config.port });
-  Deno.serve({ port: config.port }, handle);
+  const server = Deno.serve({
+    port: config.port,
+    signal: serverController.signal,
+  }, handle);
+  await server.finished.catch((error) => {
+    if (!serverController.signal.aborted) throw error;
+  });
+  await queue;
+  kv.close();
 }
 
 async function ensureParentDirectory(filePath: string): Promise<void> {

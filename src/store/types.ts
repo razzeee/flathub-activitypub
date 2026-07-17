@@ -2,6 +2,7 @@ export interface AppProfile {
   appId: string;
   name: string;
   summary?: string;
+  descriptionHtml?: string;
   iconUrl?: string;
   flathubUrl: string;
   lastSeenUpdatedAt: number;
@@ -23,9 +24,12 @@ export interface ReleaseRecord {
   publishedAt?: string;
 }
 
+export type PostKind = "release" | "new-app";
+
 export interface PostRecord {
   appId: string;
   releaseFingerprint: string;
+  kind?: PostKind;
   noteId: string;
   createActivityId: string;
   contentHtml: string;
@@ -42,8 +46,20 @@ export interface FollowerRecord {
   lastDeliveryFailureAt?: string;
 }
 
+export interface FeedAppRecord {
+  feedId: string;
+  appId: string;
+  rank: number;
+  observedAt: string;
+}
+
 export interface CrawlState {
   watermarkUpdatedAt: number;
+  completedAt: string;
+}
+
+export interface RecentlyAddedState {
+  watermarkAddedAt: number;
   completedAt: string;
 }
 

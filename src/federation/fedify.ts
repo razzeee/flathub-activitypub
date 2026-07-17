@@ -41,8 +41,9 @@ export function createFedifyFederation(
   const federation = createFederation<FederationData>({
     origin: config.origin,
     kv: new DenoKvStore(kv),
-    queue: new DenoKvMessageQueue(kv),
-    manuallyStartQueue: true,
+    ...(config.fedifyQueue === "kv"
+      ? { queue: new DenoKvMessageQueue(kv), manuallyStartQueue: true }
+      : {}),
     permanentFailureStatusCodes: [404, 410, 451],
   });
 

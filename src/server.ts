@@ -301,6 +301,10 @@ async function handleStatusPage(context: AppContext): Promise<Response> {
     releasePostCount,
     newAppPostCount,
     followerCount,
+    queueMode: context.config.fedifyQueue,
+    crawlScheduler: context.config.crawlIntervalSeconds > 0
+      ? context.config.crawlScheduler
+      : "disabled",
     crawlState,
     recentlyAddedState,
     bootstrapState,
@@ -708,6 +712,8 @@ function renderStatusPage(
     releasePostCount: number;
     newAppPostCount: number;
     followerCount: number;
+    queueMode: Config["fedifyQueue"];
+    crawlScheduler: Config["crawlScheduler"] | "disabled";
     crawlState: Awaited<ReturnType<Repositories["state"]["getCrawlState"]>>;
     recentlyAddedState: Awaited<
       ReturnType<Repositories["state"]["getRecentlyAddedState"]>
@@ -750,6 +756,8 @@ function renderStatusPage(
         ${metricCard("Release posts", status.releasePostCount)}
         ${metricCard("New-app posts", status.newAppPostCount)}
         ${metricCard("Followers", status.followerCount)}
+        ${statusCard("Fedify queue", status.queueMode)}
+        ${statusCard("Crawler scheduling", status.crawlScheduler)}
       </section>
 
       <section class="panel status-panel" aria-labelledby="crawl-state">
@@ -865,6 +873,15 @@ function metricCard(label: string, value: number): string {
     <div class="metric panel">
       <span>${escapeHtml(label)}</span>
       <strong>${value.toLocaleString("en")}</strong>
+    </div>
+  `;
+}
+
+function statusCard(label: string, value: string): string {
+  return `
+    <div class="metric panel">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
     </div>
   `;
 }

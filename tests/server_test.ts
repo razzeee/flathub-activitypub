@@ -9,9 +9,11 @@ import { createFedifyFederation } from "../src/federation/fedify.ts";
 const config: Config = {
   origin: "https://example.org",
   port: 8000,
+  fedifyQueue: "none",
   flathubApiBase: "https://flathub.org/api/v2",
   recentlyUpdatedPerPage: 2,
   recentlyUpdatedOverlapSeconds: 3600,
+  crawlScheduler: "interval",
   crawlIntervalSeconds: 300,
   bootstrapThrottleMs: 0,
 };
@@ -303,6 +305,8 @@ Deno.test("browser pages list apps and inline releases", async () => {
     assertEquals(statusResponse.status, 200);
     assertStringIncludes(statusHtml, "Ingestion and federation state");
     assertStringIncludes(statusHtml, "Release posts");
+    assertStringIncludes(statusHtml, "Fedify queue");
+    assertStringIncludes(statusHtml, "Crawler scheduling");
     assertStringIncludes(statusHtml, "Recently added watermark");
 
     const sitemapResponse = await serve(

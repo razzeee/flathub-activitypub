@@ -75,9 +75,14 @@ Watermarks are the stored high-water marks that make poll crawlers incremental:
 - `ORIGIN`: canonical public origin, default `http://localhost:8000`.
 - `PORT`: local HTTP port, default `8000`.
 - `DENO_KV_PATH`: optional local Deno KV path.
+- `FEDIFY_QUEUE`: `none` or `kv`, default `none`. New Deno Deploy does not
+  support Deno KV queues, so use `none` there. Use `kv` only where
+  `Deno.Kv.enqueue()` and `Deno.Kv.listenQueue()` are supported.
 - `FLATHUB_API_BASE`: default `https://flathub.org/api/v2`.
 - `RECENTLY_UPDATED_PER_PAGE`: default `50`.
 - `RECENTLY_UPDATED_OVERLAP_SECONDS`: default `3600`.
+- `CRAWL_SCHEDULER`: `interval` or `cron`, default `interval`. Use `cron` on
+  Deno Deploy.
 - `CRAWL_INTERVAL_SECONDS`: default `300`.
 - `BOOTSTRAP_THROTTLE_MS`: default `1000`.
 - `INTERNAL_API_TOKEN`: bearer token required for `POST /internal/ingest/*`;

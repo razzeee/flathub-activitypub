@@ -8,9 +8,11 @@ import { FakeFlathubClient } from "../src/testing/fake_client.ts";
 const config: Config = {
   origin: "https://example.org",
   port: 8000,
+  fedifyQueue: "none",
   flathubApiBase: "https://flathub.org/api/v2",
   recentlyUpdatedPerPage: 2,
   recentlyUpdatedOverlapSeconds: 3600,
+  crawlScheduler: "interval",
   crawlIntervalSeconds: 300,
   bootstrapThrottleMs: 0,
 };
@@ -125,7 +127,10 @@ Deno.test("poll delivery materializes actor keys before sending activities", asy
   const kv = await Deno.openKv(":memory:");
   try {
     const repos = createRepositories(kv);
-    const federation = createFedifyFederation(config, kv);
+    const federation = createFedifyFederation(
+      { ...config, fedifyQueue: "kv" },
+      kv,
+    );
     const client = new FakeFlathubClient();
     client.pages.set(1, {
       page: 1,

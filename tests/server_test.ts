@@ -307,6 +307,8 @@ Deno.test("browser pages list apps and inline releases", async () => {
     assertStringIncludes(statusHtml, "Release posts");
     assertStringIncludes(statusHtml, "Fedify queue");
     assertStringIncludes(statusHtml, "Crawler scheduling");
+    assertStringIncludes(statusHtml, "<dd>none</dd>");
+    assertStringIncludes(statusHtml, "<dd>interval</dd>");
     assertStringIncludes(statusHtml, "Recently added watermark");
 
     const sitemapResponse = await serve(

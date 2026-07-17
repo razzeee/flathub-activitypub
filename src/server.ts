@@ -756,13 +756,17 @@ function renderStatusPage(
         ${metricCard("Release posts", status.releasePostCount)}
         ${metricCard("New-app posts", status.newAppPostCount)}
         ${metricCard("Followers", status.followerCount)}
-        ${statusCard("Fedify queue", status.queueMode)}
-        ${statusCard("Crawler scheduling", status.crawlScheduler)}
       </section>
 
       <section class="panel status-panel" aria-labelledby="crawl-state">
         <h2 id="crawl-state">Crawler state</h2>
         <dl class="facts">
+          <div><dt>Fedify queue</dt><dd>${
+      escapeHtml(status.queueMode)
+    }</dd></div>
+          <div><dt>Crawler scheduling</dt><dd>${
+      escapeHtml(status.crawlScheduler)
+    }</dd></div>
           <div><dt>Recently updated watermark</dt><dd>${
       status.crawlState
         ? formatUpdatedAt(status.crawlState.watermarkUpdatedAt)
@@ -873,15 +877,6 @@ function metricCard(label: string, value: number): string {
     <div class="metric panel">
       <span>${escapeHtml(label)}</span>
       <strong>${value.toLocaleString("en")}</strong>
-    </div>
-  `;
-}
-
-function statusCard(label: string, value: string): string {
-  return `
-    <div class="metric panel">
-      <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value)}</strong>
     </div>
   `;
 }

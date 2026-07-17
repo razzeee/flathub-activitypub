@@ -1,6 +1,7 @@
 import { crypto } from "@std/crypto/crypto";
 import { encodeHex } from "@std/encoding/hex";
 import type { AppstreamRelease } from "./flathub/client.ts";
+import type { AppProfile, PostKind } from "./store/types.ts";
 
 export interface NormalizedRelease {
   fingerprint: string;
@@ -12,6 +13,9 @@ export interface NormalizedRelease {
   descriptionHtml: string;
   url?: string;
 }
+
+export const RELEASE_HASHTAGS = ["Flathub", "LinuxApps"];
+export const NEW_APP_HASHTAGS = ["Flathub", "LinuxApps", "NewOnFlathub"];
 
 export async function normalizeRelease(
   appId: string,
@@ -58,8 +62,14 @@ export async function normalizeReleases(
 
 export function latestRelease(
   releases: NormalizedRelease[],
+  now = new Date(),
 ): NormalizedRelease | undefined {
-  return [...releases].sort(compareReleases).at(0);
+  const cutoff = now.valueOf();
+  const eligible = releases.filter((release) => {
+    const time = releaseInstant(release);
+    return time == null || time <= cutoff;
+  });
+  return [...eligible].sort(compareReleases).at(0);
 }
 
 export function compareReleases(
@@ -143,36 +153,57 @@ export function buildNoteContent(
     `<p><strong>${label}</strong> was released on Flathub${date}.</p>`,
     `<section>${release.descriptionHtml}</section>`,
     `<p><a href="${flathubUrl}">View on Flathub</a></p>`,
+    hashtagParagraph(RELEASE_HASHTAGS),
   ].join("\n");
+}
+
+export function buildNewAppNoteContent(profile: AppProfile): string {
+  const name = escapeHtml(profile.name || profile.appId);
+  const summary = profile.summary
+    ? `<p>${escapeHtml(profile.summary)}</p>`
+    : "";
+  return [
+    `<p><strong>${name}</strong> was added to Flathub.</p>`,
+    summary,
+    `<p><a href="${
+      escapeAttribute(profile.flathubUrl)
+    }">View on Flathub</a></p>`,
+    hashtagParagraph(NEW_APP_HASHTAGS),
+  ].filter(Boolean).join("\n");
+}
+
+export function hashtagsForPost(kind?: PostKind): string[] {
+  return kind === "new-app" ? NEW_APP_HASHTAGS : RELEASE_HASHTAGS;
 }
 
 export function releasePublishedAt(
   release: NormalizedRelease,
   fallback = new Date(),
 ): string {
-  if (release.timestamp !== "") {
-    const seconds = Number(release.timestamp);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return new Date(seconds * 1000).toISOString();
-    }
-  }
-  if (release.date !== "") {
-    const date = new Date(release.date);
-    if (!Number.isNaN(date.valueOf())) return date.toISOString();
+  const time = releaseInstant(release);
+  if (time != null && time <= fallback.valueOf()) {
+    return new Date(time).toISOString();
   }
   return fallback.toISOString();
 }
 
-function releaseTime(release: NormalizedRelease): number {
+function releaseInstant(release: NormalizedRelease): number | null {
   if (release.timestamp !== "") {
     const seconds = Number(release.timestamp);
-    if (Number.isFinite(seconds)) return seconds * 1000;
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return seconds * 1000;
+    }
   }
   if (release.date !== "") {
-    const time = new Date(release.date).valueOf();
+    const date = new Date(release.date);
+    const time = date.valueOf();
     if (!Number.isNaN(time)) return time;
   }
-  return 0;
+  return null;
+}
+
+function releaseTime(release: NormalizedRelease): number {
+  return releaseInstant(release) ?? 0;
 }
 
 function collapseWhitespace(value: string): string {
@@ -188,6 +219,10 @@ function escapeHtml(value: string): string {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value).replaceAll('"', "&quot;");
+}
+
+function hashtagParagraph(hashtags: string[]): string {
+  return `<p>${hashtags.map((tag) => `#${tag}`).join(" ")}</p>`;
 }
 
 async function sha256(value: string): Promise<string> {

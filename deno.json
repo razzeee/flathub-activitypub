@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal src/main.ts",
+    "dev": "deno run --watch --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal src/main.ts",
     "start": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal src/main.ts",
     "test": "deno test --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal",
     "check": "deno check --unstable-temporal src/main.ts",

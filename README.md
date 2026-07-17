@@ -82,8 +82,9 @@ Watermarks are the stored high-water marks that make poll crawlers incremental:
 - `RECENTLY_UPDATED_PER_PAGE`: default `50`.
 - `RECENTLY_UPDATED_OVERLAP_SECONDS`: default `3600`.
 - `CRAWL_SCHEDULER`: `interval` or `cron`, default `interval`. Use `cron` on
-  Deno Deploy.
-- `CRAWL_INTERVAL_SECONDS`: default `300`.
+  Deno Deploy. Cron mode is registered as a 5-minute `Deno.cron()` job.
+- `CRAWL_INTERVAL_SECONDS`: default `300`; used by `interval` mode. Set to `0`
+  to disable scheduled crawling.
 - `BOOTSTRAP_THROTTLE_MS`: default `1000`.
 - `INTERNAL_API_TOKEN`: bearer token required for `POST /internal/ingest/*`;
   when unset, internal ingestion routes return 404.

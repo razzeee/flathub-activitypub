@@ -25,11 +25,15 @@ import type { Federation } from "@fedify/fedify";
 
 const ACTIVITY_JSON = "application/activity+json; charset=utf-8";
 
+type ResolveHostAddresses = (hostname: string) => Promise<string[]>;
+
 export interface AppContext {
   config: Config;
   repos: Repositories;
   ingestor: Ingestor;
   federation: Federation<FederationData>;
+  fetcher?: typeof fetch;
+  resolveHostAddresses?: ResolveHostAddresses;
 }
 
 export function createApp(
@@ -915,11 +919,11 @@ function appLastModified(app: AppProfile): string {
   return app.updatedAt;
 }
 
-function handleRemoteFollow(
+async function handleRemoteFollow(
   context: AppContext,
   actor: { id: string; name: string },
   url: URL,
-): Response {
+): Promise<Response> {
   const server = normalizeFollowServer(url.searchParams.get("server") ?? "");
   if (!server) {
     return html(
@@ -934,9 +938,191 @@ function handleRemoteFollow(
     );
   }
 
-  const followUrl = new URL("/authorize_interaction", server);
-  followUrl.searchParams.set("uri", acctUri(context, actor.id));
+  const actorUrl = `${context.config.origin}${actorPath(actor.id)}`;
+  const followUrl = await remoteInteractionUrl(context, server, actorUrl);
   return redirect(followUrl.href);
+}
+
+async function remoteInteractionUrl(
+  context: AppContext,
+  server: string,
+  actorUrl: string,
+): Promise<URL> {
+  const fallback = fallbackInteractionUrl(server, actorUrl);
+  const template = await discoverInteractionTemplate(context, server);
+  if (!template) return fallback;
+  return interactionUrlFromTemplate(template, actorUrl) ?? fallback;
+}
+
+function fallbackInteractionUrl(server: string, actorUrl: string): URL {
+  const url = new URL("/authorize_interaction", server);
+  url.searchParams.set("uri", actorUrl);
+  return url;
+}
+
+interface InteractionTemplate {
+  template: string;
+  param: "object" | "uri";
+}
+
+async function discoverInteractionTemplate(
+  context: AppContext,
+  server: string,
+): Promise<InteractionTemplate | null> {
+  if (!(await canDiscoverInteractionTemplate(context, server))) return null;
+  const webfingerUrl = new URL("/.well-known/webfinger", server);
+  webfingerUrl.searchParams.set("resource", server);
+  try {
+    const response = await (context.fetcher ?? fetch)(webfingerUrl, {
+      headers: { accept: "application/jrd+json, application/json" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return null;
+    return interactionTemplateFromJrd(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+async function canDiscoverInteractionTemplate(
+  context: AppContext,
+  server: string,
+): Promise<boolean> {
+  const url = new URL(server);
+  if (url.protocol !== "https:") return false;
+  const hostname = normalizeDiscoveryHostname(url.hostname);
+  if (isUnsafeDiscoveryHostname(hostname)) return false;
+  const addresses = await resolveHostAddresses(context, hostname);
+  return addresses.length > 0 && !addresses.some(isUnsafeResolvedAddress);
+}
+
+function normalizeDiscoveryHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
+function isUnsafeDiscoveryHostname(hostname: string): boolean {
+  return hostname === "" || hostname === "localhost" ||
+    hostname.endsWith(".localhost") || parseIPv4Address(hostname) !== null ||
+    hostname.startsWith("[") || hostname.includes(":");
+}
+
+async function resolveHostAddresses(
+  context: AppContext,
+  hostname: string,
+): Promise<string[]> {
+  try {
+    return await (context.resolveHostAddresses ?? defaultResolveHostAddresses)(
+      hostname,
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function defaultResolveHostAddresses(
+  hostname: string,
+): Promise<string[]> {
+  const results = await Promise.allSettled([
+    Deno.resolveDns(hostname, "A"),
+    Deno.resolveDns(hostname, "AAAA"),
+  ]);
+  return results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : []
+  );
+}
+
+function isUnsafeResolvedAddress(address: string): boolean {
+  const ipv4 = parseIPv4Address(address);
+  if (ipv4) return isUnsafeIPv4Address(ipv4);
+  if (!address.includes(":")) return true;
+  return isUnsafeIPv6Address(address);
+}
+
+function parseIPv4Address(
+  hostname: string,
+): [number, number, number, number] | null {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => part.trim() === "" ? NaN : Number(part));
+  if (
+    octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
+  ) {
+    return null;
+  }
+  return octets as [number, number, number, number];
+}
+
+function isUnsafeIPv4Address(
+  address: [number, number, number, number],
+): boolean {
+  const [a, b, c] = address;
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+    (a === 203 && b === 0 && c === 113);
+}
+
+function isUnsafeIPv6Address(address: string): boolean {
+  const value = address.toLowerCase();
+  const mappedIpv4 = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mappedIpv4) {
+    const ipv4 = parseIPv4Address(mappedIpv4[1]);
+    return !ipv4 || isUnsafeIPv4Address(ipv4);
+  }
+  return value === "::" || value === "::1" || value.startsWith("fc") ||
+    value.startsWith("fd") || value.startsWith("fe8") ||
+    value.startsWith("fe9") || value.startsWith("fea") ||
+    value.startsWith("feb") || value.startsWith("ff") ||
+    value.startsWith("2001:db8:");
+}
+
+function interactionTemplateFromJrd(
+  input: unknown,
+): InteractionTemplate | null {
+  const follow = findTemplateLink(input, "https://w3id.org/fep/3b86/Follow");
+  if (follow) return { template: follow, param: "object" };
+  const object = findTemplateLink(input, "https://w3id.org/fep/3b86/Object");
+  if (object) return { template: object, param: "object" };
+  const legacy = findTemplateLink(
+    input,
+    "http://ostatus.org/schema/1.0/subscribe",
+  );
+  if (legacy) return { template: legacy, param: "uri" };
+  return null;
+}
+
+function findTemplateLink(input: unknown, rel: string): string | null {
+  if (!isRecord(input) || !Array.isArray(input.links)) return null;
+  for (const link of input.links) {
+    if (!isRecord(link)) continue;
+    if (link.rel === rel && typeof link.template === "string") {
+      return link.template;
+    }
+  }
+  return null;
+}
+
+function interactionUrlFromTemplate(
+  input: InteractionTemplate,
+  actorUrl: string,
+): URL | null {
+  const placeholder = `{${input.param}}`;
+  if (!input.template.includes(placeholder)) return null;
+  try {
+    const url = new URL(
+      input.template.replaceAll(placeholder, encodeURIComponent(actorUrl)),
+    );
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function normalizeFollowServer(input: string): string | null {
@@ -1923,10 +2109,6 @@ function actorPath(appId: string): string {
 
 function fediverseHandle(context: AppContext, appId: string): string {
   return `@${appId}@${new URL(context.config.origin).host}`;
-}
-
-function acctUri(context: AppContext, appId: string): string {
-  return `acct:${appId}@${new URL(context.config.origin).host}`;
 }
 
 function formatDate(value: string): string {

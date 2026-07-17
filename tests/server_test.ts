@@ -168,6 +168,8 @@ Deno.test("browser pages list apps and inline releases", async () => {
       repos,
       ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
       federation: createFedifyFederation(config, kv),
+      fetcher: () => Promise.resolve(new Response(null, { status: 404 })),
+      resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
     };
     const serve = handler(app);
 
@@ -289,13 +291,13 @@ Deno.test("browser pages list apps and inline releases", async () => {
 
     const followResponse = await serve(
       new Request(
-        "https://example.org/apps/org.mozilla.firefox?follow=1&server=mastodon.social",
+        "https://example.org/apps/org.mozilla.firefox?follow=1&server=https%3A%2F%2Fmastodon.social%2Fexplore",
       ),
     );
     assertEquals(followResponse.status, 303);
     assertEquals(
       followResponse.headers.get("location"),
-      "https://mastodon.social/authorize_interaction?uri=acct%3Aorg.mozilla.firefox%40example.org",
+      "https://mastodon.social/authorize_interaction?uri=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
     );
 
     const statusResponse = await serve(
@@ -348,6 +350,204 @@ Deno.test("browser pages list apps and inline releases", async () => {
     assertStringIncludes(sitemap, "<lastmod>");
     assertStringIncludes(sitemap, "<changefreq>");
     assertStringIncludes(sitemap, "<priority>");
+  } finally {
+    kv.close();
+  }
+});
+
+Deno.test("remote follow uses discovered interaction template", async () => {
+  const kv = await Deno.openKv(":memory:");
+  try {
+    const repos = createRepositories(kv);
+    await repos.apps.upsertFromHit({
+      appId: "org.mozilla.firefox",
+      name: "Firefox",
+      summary: "A web browser",
+      updatedAt: 100,
+    });
+    const discoveryRequests: string[] = [];
+    const fetchOptions: RequestInit[] = [];
+    const fetcher: typeof fetch = (input, init) => {
+      discoveryRequests.push(String(input));
+      fetchOptions.push(init ?? {});
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            links: [
+              {
+                rel: "http://ostatus.org/schema/1.0/subscribe",
+                template: "https://mastodon.social/legacy?uri={uri}",
+              },
+              {
+                rel: "https://w3id.org/fep/3b86/Follow",
+                template: "https://mastodon.social/follow?object={object}",
+              },
+            ],
+          }),
+          { headers: { "content-type": "application/jrd+json" } },
+        ),
+      );
+    };
+    const app = {
+      config,
+      repos,
+      ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
+      federation: createFedifyFederation(config, kv),
+      fetcher,
+      resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    };
+
+    const response = await handler(app)(
+      new Request(
+        "https://example.org/apps/org.mozilla.firefox?follow=1&server=https%3A%2F%2Fmastodon.social%2Fexplore",
+      ),
+    );
+
+    assertEquals(discoveryRequests, [
+      "https://mastodon.social/.well-known/webfinger?resource=https%3A%2F%2Fmastodon.social",
+    ]);
+    assertEquals(fetchOptions[0].redirect, "manual");
+    assertEquals(response.status, 303);
+    assertEquals(
+      response.headers.get("location"),
+      "https://mastodon.social/follow?object=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
+    );
+  } finally {
+    kv.close();
+  }
+});
+
+Deno.test("remote follow falls back when interaction discovery fails", async () => {
+  const kv = await Deno.openKv(":memory:");
+  try {
+    const repos = createRepositories(kv);
+    await repos.apps.upsertFromHit({
+      appId: "org.mozilla.firefox",
+      name: "Firefox",
+      summary: "A web browser",
+      updatedAt: 100,
+    });
+    let discoveryRequests = 0;
+    const fetcher: typeof fetch = () => {
+      discoveryRequests += 1;
+      return Promise.resolve(new Response(null, { status: 404 }));
+    };
+    const app = {
+      config,
+      repos,
+      ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
+      federation: createFedifyFederation(config, kv),
+      fetcher,
+      resolveHostAddresses: () => Promise.resolve(["93.184.216.34"]),
+    };
+
+    const response = await handler(app)(
+      new Request(
+        "https://example.org/apps/org.mozilla.firefox?follow=1&server=mastodon.social",
+      ),
+    );
+
+    assertEquals(discoveryRequests, 1);
+    assertEquals(response.status, 303);
+    assertEquals(
+      response.headers.get("location"),
+      "https://mastodon.social/authorize_interaction?uri=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
+    );
+  } finally {
+    kv.close();
+  }
+});
+
+Deno.test("remote follow does not discover unsafe literal hosts", async () => {
+  const kv = await Deno.openKv(":memory:");
+  try {
+    const repos = createRepositories(kv);
+    await repos.apps.upsertFromHit({
+      appId: "org.mozilla.firefox",
+      name: "Firefox",
+      summary: "A web browser",
+      updatedAt: 100,
+    });
+    let discoveryRequests = 0;
+    let dnsRequests = 0;
+    const app = {
+      config,
+      repos,
+      ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
+      federation: createFedifyFederation(config, kv),
+      fetcher: () => {
+        discoveryRequests += 1;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+      resolveHostAddresses: () => {
+        dnsRequests += 1;
+        return Promise.resolve(["93.184.216.34"]);
+      },
+    };
+    const serve = handler(app);
+
+    for (
+      const server of [
+        "https://localhost.",
+        "https://[::1]",
+        "https://[fd00::1]",
+        "https://10.0.0.1",
+      ]
+    ) {
+      const url = new URL("https://example.org/apps/org.mozilla.firefox");
+      url.searchParams.set("follow", "1");
+      url.searchParams.set("server", server);
+      const response = await serve(new Request(url));
+      assertEquals(response.status, 303);
+    }
+
+    assertEquals(dnsRequests, 0);
+    assertEquals(discoveryRequests, 0);
+  } finally {
+    kv.close();
+  }
+});
+
+Deno.test("remote follow does not fetch domains resolving to private addresses", async () => {
+  const kv = await Deno.openKv(":memory:");
+  try {
+    const repos = createRepositories(kv);
+    await repos.apps.upsertFromHit({
+      appId: "org.mozilla.firefox",
+      name: "Firefox",
+      summary: "A web browser",
+      updatedAt: 100,
+    });
+    let discoveryRequests = 0;
+    const resolvedHosts: string[] = [];
+    const app = {
+      config,
+      repos,
+      ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
+      federation: createFedifyFederation(config, kv),
+      fetcher: () => {
+        discoveryRequests += 1;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+      resolveHostAddresses: (hostname: string) => {
+        resolvedHosts.push(hostname);
+        return Promise.resolve(["10.0.0.2"]);
+      },
+    };
+
+    const response = await handler(app)(
+      new Request(
+        "https://example.org/apps/org.mozilla.firefox?follow=1&server=attacker.example",
+      ),
+    );
+
+    assertEquals(resolvedHosts, ["attacker.example"]);
+    assertEquals(discoveryRequests, 0);
+    assertEquals(response.status, 303);
+    assertEquals(
+      response.headers.get("location"),
+      "https://attacker.example/authorize_interaction?uri=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
+    );
   } finally {
     kv.close();
   }

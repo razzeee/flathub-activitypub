@@ -1,0 +1,21 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal src/main.ts",
+    "start": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal src/main.ts",
+    "test": "deno test --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-temporal",
+    "check": "deno check --unstable-temporal src/main.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "@fedify/denokv": "jsr:@fedify/denokv@^2.3.1",
+    "@fedify/fedify": "jsr:@fedify/fedify@^2.3.1",
+    "@fedify/vocab": "jsr:@fedify/vocab@^2.3.1",
+    "@std/assert": "jsr:@std/assert@^1.0.13",
+    "@std/crypto": "jsr:@std/crypto@^1.0.5",
+    "@std/encoding": "jsr:@std/encoding@^1.0.10"
+  },
+  "compilerOptions": {
+    "strict": true
+  }
+}

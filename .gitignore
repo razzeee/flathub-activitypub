@@ -1,0 +1,18 @@
+# Local runtime data
+.data/
+
+# Logs
+*.log
+
+# Deno cache/coverage artifacts
+coverage/
+.deno/
+
+# Environment files
+.env
+.env.*
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/

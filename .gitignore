@@ -16,3 +16,10 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# Workers and pnpm artifacts
+node_modules/
+.wrangler/
+dist/
+.dev.vars
+.dev.vars.*

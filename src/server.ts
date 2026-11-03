@@ -19,9 +19,10 @@ import {
   type FederationData,
 } from "./federation/fedify.ts";
 import { Ingestor } from "./ingestion/ingestor.ts";
-import { createRepositories, type Repositories } from "./store/kv_store.ts";
+import { createRepositories, type Repositories } from "./store/d1_store.ts";
 import type { AppProfile, PostKind, PostRecord } from "./store/types.ts";
-import type { Federation } from "@fedify/fedify";
+import type { Federation, MessageQueue } from "@fedify/fedify";
+import { resolve4, resolve6 } from "node:dns/promises";
 
 const ACTIVITY_JSON = "application/activity+json; charset=utf-8";
 
@@ -34,15 +35,17 @@ export interface AppContext {
   federation: Federation<FederationData>;
   fetcher?: typeof fetch;
   resolveHostAddresses?: ResolveHostAddresses;
+  enqueueIngestion?: (kind: "bootstrap" | "poll") => Promise<void>;
 }
 
 export function createApp(
   config: Config,
-  kv: Deno.Kv,
+  db: D1Database,
+  queue?: MessageQueue,
 ): AppContext {
-  const repos = createRepositories(kv);
+  const repos = createRepositories(db);
   const client = new FlathubClient(config.flathubApiBase);
-  const federation = createFedifyFederation(config, kv);
+  const federation = createFedifyFederation(config, db, queue);
   return {
     config,
     repos,
@@ -61,6 +64,11 @@ export function handler(
         return json({ ok: true });
       }
       if (request.method === "GET" && url.pathname === "/readyz") {
+        try {
+          await context.repos.state.get("readiness");
+        } catch {
+          return json({ ok: false }, 503);
+        }
         return json({ ok: true });
       }
       if (request.method === "GET" && url.pathname === "/") {
@@ -83,6 +91,10 @@ export function handler(
       ) {
         const unauthorized = authorizeInternalRequest(context, request);
         if (unauthorized) return unauthorized;
+        if (context.enqueueIngestion) {
+          await context.enqueueIngestion("bootstrap");
+          return json({ queued: true }, 202);
+        }
         await context.ingestor.bootstrap();
         return json({ ok: true });
       }
@@ -91,6 +103,10 @@ export function handler(
       ) {
         const unauthorized = authorizeInternalRequest(context, request);
         if (unauthorized) return unauthorized;
+        if (context.enqueueIngestion) {
+          await context.enqueueIngestion("poll");
+          return json({ queued: true }, 202);
+        }
         await context.ingestor.poll();
         return json({ ok: true });
       }
@@ -306,9 +322,7 @@ async function handleStatusPage(context: AppContext): Promise<Response> {
     newAppPostCount,
     followerCount,
     queueMode: context.config.fedifyQueue,
-    crawlScheduler: context.config.crawlIntervalSeconds > 0
-      ? context.config.crawlScheduler
-      : "disabled",
+    crawlScheduler: context.config.crawlScheduler,
     crawlState,
     recentlyAddedState,
     bootstrapState,
@@ -1024,8 +1038,8 @@ async function defaultResolveHostAddresses(
   hostname: string,
 ): Promise<string[]> {
   const results = await Promise.allSettled([
-    Deno.resolveDns(hostname, "A"),
-    Deno.resolveDns(hostname, "AAAA"),
+    resolve4(hostname),
+    resolve6(hostname),
   ]);
   return results.flatMap((result) =>
     result.status === "fulfilled" ? result.value : []

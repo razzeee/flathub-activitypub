@@ -1,66 +1,106 @@
-import "./cron.ts";
-import { loadConfig } from "./config.ts";
-import { logError, logEvent } from "./log.ts";
+import { WorkersMessageQueue } from "@fedify/cfworkers";
+import type { Message } from "@fedify/fedify";
+import { loadConfig, type Variables } from "./config.ts";
 import { createApp, handler } from "./server.ts";
+import type { CrawlJob } from "./ingestion/ingestor.ts";
+import { D1KvStore } from "./store/fedify_kv.ts";
+import { logError } from "./log.ts";
 
-if (import.meta.main) {
-  const config = loadConfig();
-  if (config.denoKvPath) await ensureParentDirectory(config.denoKvPath);
-  const kv = await Deno.openKv(config.denoKvPath);
-  const app = createApp(config, kv);
-  const handle = handler(app);
+export interface IngestionMessage {
+  kind: "bootstrap" | "poll";
+  id: string;
+  continuation?: boolean;
+}
 
-  const serverController = new AbortController();
-  let crawlTimer: ReturnType<typeof setInterval> | undefined;
-  let queueController: AbortController | undefined;
-  let queue: Promise<void> | undefined;
-  let shuttingDown = false;
+export interface Env extends Variables {
+  DB: D1Database;
+  FEDERATION_QUEUE: Queue;
+  INGESTION_QUEUE: Queue<IngestionMessage>;
+  FEDERATION_QUEUE_NAME?: string;
+  INGESTION_QUEUE_NAME?: string;
+}
 
-  const shutdown = (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    logEvent("server.shutdown", { signal });
-    if (crawlTimer != null) clearInterval(crawlTimer);
-    queueController?.abort();
-    serverController.abort();
+function createWorkerApp(env: Env) {
+  const queue = new WorkersMessageQueue(env.FEDERATION_QUEUE);
+  const app = createApp(loadConfig(env), env.DB, queue);
+  app.enqueueIngestion = async (kind) => {
+    await env.INGESTION_QUEUE.send({ kind, id: crypto.randomUUID() });
   };
+  return { app, queue };
+}
 
-  Deno.addSignalListener("SIGINT", () => shutdown("SIGINT"));
-  Deno.addSignalListener("SIGTERM", () => shutdown("SIGTERM"));
-  if (config.fedifyQueue === "kv") {
-    queueController = new AbortController();
-    queue = app.federation.startQueue(
-      { repos: app.repos },
-      { signal: queueController.signal },
-    ).catch((error) => {
-      if (!queueController?.signal.aborted) {
-        logError("fedify_queue.failed", error);
-      }
+export async function processIngestion(
+  message: IngestionMessage,
+  env: Env,
+  app = createWorkerApp(env).app,
+): Promise<void> {
+  const key = `job:${message.kind}`;
+  let job = await app.repos.state.get<CrawlJob>(key);
+  if (message.continuation && job?.id !== message.id) return; // Stale retry from an earlier run.
+  if (job?.id === message.id && job.phase === "done") return;
+  // Scheduled ticks also recover a checkpoint whose continuation could not be sent.
+  if (!job || job.phase === "done")
+    job = await app.ingestor.newJob(message.kind, message.id);
+  const next = await app.ingestor.step(job);
+  await app.repos.state.set(key, next);
+  if (next.phase !== "done") {
+    await env.INGESTION_QUEUE.send({
+      kind: next.kind,
+      id: next.id,
+      continuation: true,
     });
   }
-
-  if (config.crawlScheduler === "interval" && config.crawlIntervalSeconds > 0) {
-    crawlTimer = setInterval(() => {
-      app.ingestor.poll().catch((error) =>
-        logError("scheduled_crawl.failed", error)
-      );
-    }, config.crawlIntervalSeconds * 1000);
-  }
-
-  logEvent("server.start", { origin: config.origin, port: config.port });
-  const server = Deno.serve({
-    port: config.port,
-    signal: serverController.signal,
-  }, handle);
-  await server.finished.catch((error) => {
-    if (!serverController.signal.aborted) throw error;
-  });
-  await queue;
-  kv.close();
 }
 
-async function ensureParentDirectory(filePath: string): Promise<void> {
-  const lastSlash = filePath.lastIndexOf("/");
-  if (lastSlash <= 0) return;
-  await Deno.mkdir(filePath.slice(0, lastSlash), { recursive: true });
-}
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const { app } = createWorkerApp(env);
+    return handler(app)(request);
+  },
+
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    await new D1KvStore(env.DB).prune();
+    await env.INGESTION_QUEUE.send({ kind: "poll", id: crypto.randomUUID() });
+  },
+
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    const { app, queue } = createWorkerApp(env);
+    for (const message of batch.messages) {
+      try {
+        if (batch.queue === (env.INGESTION_QUEUE_NAME ?? "flathub-ingestion")) {
+          await processIngestion(message.body as IngestionMessage, env, app);
+        } else if (
+          batch.queue === (env.FEDERATION_QUEUE_NAME ?? "flathub-federation")
+        ) {
+          const task = await queue.processMessage(message.body);
+          if (!task.shouldProcess) {
+            message.retry({ delaySeconds: 30 });
+            continue;
+          }
+          try {
+            await app.federation.processQueuedTask(
+              { repos: app.repos },
+              task.message as Message,
+            );
+          } finally {
+            await task.release?.();
+          }
+        } else {
+          throw new Error(`Unexpected queue: ${batch.queue}`);
+        }
+        message.ack();
+      } catch (error) {
+        logError("queue.failed", error, {
+          queue: batch.queue,
+          messageId: message.id,
+        });
+        message.retry({
+          delaySeconds: Math.min(
+            3600,
+            30 * 2 ** Math.min(message.attempts - 1, 7),
+          ),
+        });
+      }
+    }
+  },
+} satisfies ExportedHandler<Env>;

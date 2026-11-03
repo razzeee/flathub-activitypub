@@ -1,25 +1,32 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { test } from "vitest";
+import { assertEquals, assertStringIncludes, openDatabase } from "./helpers.ts";
 import type { Config } from "../src/config.ts";
-import { createRepositories } from "../src/store/kv_store.ts";
+import { createRepositories } from "../src/store/d1_store.ts";
 import { handler } from "../src/server.ts";
 import { Ingestor } from "../src/ingestion/ingestor.ts";
 import { FakeFlathubClient } from "../src/testing/fake_client.ts";
 import { createFedifyFederation } from "../src/federation/fedify.ts";
 
+interface ActorDocument {
+  type: string; preferredUsername: string; name: string; summary: string;
+  publicKey: { id: string }; endpoints: { sharedInbox: string };
+}
+interface OutboxDocument {
+  totalItems: number;
+  orderedItems: { type: string; actor: string; object: string }[];
+}
+
 const config: Config = {
   origin: "https://example.org",
-  port: 8000,
   fedifyQueue: "none",
   flathubApiBase: "https://flathub.org/api/v2",
   recentlyUpdatedPerPage: 2,
   recentlyUpdatedOverlapSeconds: 3600,
-  crawlScheduler: "interval",
-  crawlIntervalSeconds: 300,
-  bootstrapThrottleMs: 0,
+  crawlScheduler: "cron",
 };
 
-Deno.test("actor and WebFinger routes expose ingested app", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("actor and WebFinger routes expose ingested app", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     await repos.apps.upsertFromHit({
@@ -48,7 +55,7 @@ Deno.test("actor and WebFinger routes expose ingested app", async () => {
         headers: { accept: "application/activity+json" },
       }),
     );
-    const actor = await actorResponse.json();
+    const actor = await actorResponse.json<ActorDocument>();
     assertEquals(actor.type, "Service");
     assertEquals(actor.preferredUsername, "org.mozilla.firefox");
     assertEquals(actor.name, "Firefox");
@@ -63,7 +70,7 @@ Deno.test("actor and WebFinger routes expose ingested app", async () => {
         headers: { accept: "application/activity+json" },
       }),
     );
-    const describedActor = await describedActorResponse.json();
+    const describedActor = await describedActorResponse.json<ActorDocument>();
     assertStringIncludes(
       describedActor.summary,
       "<p>Long <strong>description</strong></p>",
@@ -75,7 +82,7 @@ Deno.test("actor and WebFinger routes expose ingested app", async () => {
         "https://example.org/.well-known/webfinger?resource=acct:org.mozilla.firefox@example.org",
       ),
     );
-    const wf = await wfResponse.json();
+    const wf = await wfResponse.json<{ subject: string }>();
     assertEquals(wf.subject, "acct:org.mozilla.firefox@example.org");
 
     const feedActorResponse = await serve(
@@ -83,7 +90,7 @@ Deno.test("actor and WebFinger routes expose ingested app", async () => {
         headers: { accept: "application/activity+json" },
       }),
     );
-    const feedActor = await feedActorResponse.json();
+    const feedActor = await feedActorResponse.json<ActorDocument>();
     assertEquals(feedActor.type, "Service");
     assertEquals(feedActor.preferredUsername, "recent-releases");
 
@@ -92,15 +99,15 @@ Deno.test("actor and WebFinger routes expose ingested app", async () => {
         "https://example.org/.well-known/webfinger?resource=acct:recent-releases@example.org",
       ),
     );
-    const feedWf = await feedWfResponse.json();
+    const feedWf = await feedWfResponse.json<{ subject: string }>();
     assertEquals(feedWf.subject, "acct:recent-releases@example.org");
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("browser pages list apps and inline releases", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("browser pages list apps and inline releases", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     await repos.apps.upsertFromHit({
@@ -223,7 +230,7 @@ Deno.test("browser pages list apps and inline releases", async () => {
         },
       ),
     );
-    const note = await noteResponse.json();
+    const note = await noteResponse.json<{ type: string; tag: { name: string }[] }>();
     assertEquals(noteResponse.status, 200);
     assertEquals(note.type, "Note");
     assertEquals(note.tag[0].name, "#Flathub");
@@ -243,7 +250,7 @@ Deno.test("browser pages list apps and inline releases", async () => {
     const feedOutboxResponse = await serve(
       new Request("https://example.org/apps/recent-releases/outbox"),
     );
-    const feedOutbox = await feedOutboxResponse.json();
+    const feedOutbox = await feedOutboxResponse.json<OutboxDocument>();
     assertEquals(feedOutbox.totalItems, 1);
     assertEquals(feedOutbox.orderedItems[0].type, "Announce");
     assertEquals(
@@ -281,7 +288,7 @@ Deno.test("browser pages list apps and inline releases", async () => {
     const trendingOutboxResponse = await serve(
       new Request("https://example.org/apps/trending-apps/outbox"),
     );
-    const trendingOutbox = await trendingOutboxResponse.json();
+    const trendingOutbox = await trendingOutboxResponse.json<OutboxDocument>();
     assertEquals(trendingOutbox.totalItems, 1);
     assertEquals(trendingOutbox.orderedItems[0].type, "Announce");
     assertEquals(
@@ -310,7 +317,7 @@ Deno.test("browser pages list apps and inline releases", async () => {
     assertStringIncludes(statusHtml, "Fedify queue");
     assertStringIncludes(statusHtml, "Crawler scheduling");
     assertStringIncludes(statusHtml, "<dd>none</dd>");
-    assertStringIncludes(statusHtml, "<dd>interval</dd>");
+    assertStringIncludes(statusHtml, "<dd>cron</dd>");
     assertStringIncludes(statusHtml, "Recently added watermark");
 
     const sitemapResponse = await serve(
@@ -351,12 +358,12 @@ Deno.test("browser pages list apps and inline releases", async () => {
     assertStringIncludes(sitemap, "<changefreq>");
     assertStringIncludes(sitemap, "<priority>");
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("remote follow uses discovered interaction template", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("remote follow uses discovered interaction template", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     await repos.apps.upsertFromHit({
@@ -413,12 +420,12 @@ Deno.test("remote follow uses discovered interaction template", async () => {
       "https://mastodon.social/follow?object=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
     );
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("remote follow falls back when interaction discovery fails", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("remote follow falls back when interaction discovery fails", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     await repos.apps.upsertFromHit({
@@ -454,12 +461,12 @@ Deno.test("remote follow falls back when interaction discovery fails", async () 
       "https://mastodon.social/authorize_interaction?uri=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
     );
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("remote follow does not discover unsafe literal hosts", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("remote follow does not discover unsafe literal hosts", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     await repos.apps.upsertFromHit({
@@ -504,12 +511,12 @@ Deno.test("remote follow does not discover unsafe literal hosts", async () => {
     assertEquals(dnsRequests, 0);
     assertEquals(discoveryRequests, 0);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("remote follow does not fetch domains resolving to private addresses", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("remote follow does not fetch domains resolving to private addresses", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     await repos.apps.upsertFromHit({
@@ -549,12 +556,12 @@ Deno.test("remote follow does not fetch domains resolving to private addresses",
       "https://attacker.example/authorize_interaction?uri=https%3A%2F%2Fexample.org%2Fapps%2Forg.mozilla.firefox",
     );
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("internal ingestion routes require configured bearer token", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("internal ingestion routes require configured bearer token", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     let polled = false;
@@ -588,12 +595,12 @@ Deno.test("internal ingestion routes require configured bearer token", async () 
     assertEquals(authorized.status, 200);
     assertEquals(polled, true);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("internal ingestion routes are hidden when token is unset", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("internal ingestion routes are hidden when token is unset", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const app = {
@@ -609,6 +616,6 @@ Deno.test("internal ingestion routes are hidden when token is unset", async () =
     );
     assertEquals(response.status, 404);
   } finally {
-    kv.close();
+    await close();
   }
 });

@@ -1,61 +1,63 @@
 export interface Config {
   origin: string;
-  port: number;
-  denoKvPath?: string;
-  fedifyQueue: "kv" | "none";
   flathubApiBase: string;
   recentlyUpdatedPerPage: number;
   recentlyUpdatedOverlapSeconds: number;
-  crawlScheduler: "interval" | "cron";
-  crawlIntervalSeconds: number;
-  bootstrapThrottleMs: number;
   internalApiToken?: string;
+  fedifyQueue: "cloudflare" | "none";
+  crawlScheduler: "cron";
 }
 
-export function loadConfig(env: Deno.Env = Deno.env): Config {
+export interface Variables {
+  ORIGIN?: string;
+  FLATHUB_API_BASE?: string;
+  RECENTLY_UPDATED_PER_PAGE?: string;
+  RECENTLY_UPDATED_OVERLAP_SECONDS?: string;
+  INTERNAL_API_TOKEN?: string;
+}
+
+export function loadConfig(env: Variables): Config {
+  const origin = new URL(env.ORIGIN ?? "http://localhost:8787");
+  if (origin.protocol !== "http:" && origin.protocol !== "https:") {
+    throw new Error("ORIGIN must be an HTTP(S) origin");
+  }
+  if (
+    origin.pathname !== "/" ||
+    origin.search ||
+    origin.hash ||
+    origin.username ||
+    origin.password
+  ) {
+    throw new Error(
+      "ORIGIN must not include a path, credentials, query or fragment",
+    );
+  }
   return {
-    origin: stripTrailingSlash(env.get("ORIGIN") ?? "http://localhost:8000"),
-    port: readNumber(env, "PORT", 8000),
-    denoKvPath: env.get("DENO_KV_PATH") || undefined,
-    fedifyQueue: readFedifyQueue(env),
-    flathubApiBase: stripTrailingSlash(
-      env.get("FLATHUB_API_BASE") ?? "https://flathub.org/api/v2",
-    ),
-    recentlyUpdatedPerPage: readNumber(env, "RECENTLY_UPDATED_PER_PAGE", 50),
+    origin: origin.origin,
+    flathubApiBase: (
+      env.FLATHUB_API_BASE ?? "https://flathub.org/api/v2"
+    ).replace(/\/+$/, ""),
+    recentlyUpdatedPerPage: readNumber(env.RECENTLY_UPDATED_PER_PAGE, 10, 1),
     recentlyUpdatedOverlapSeconds: readNumber(
-      env,
-      "RECENTLY_UPDATED_OVERLAP_SECONDS",
+      env.RECENTLY_UPDATED_OVERLAP_SECONDS,
       3600,
+      0,
     ),
-    crawlScheduler: readCrawlScheduler(env),
-    crawlIntervalSeconds: readNumber(env, "CRAWL_INTERVAL_SECONDS", 300),
-    bootstrapThrottleMs: readNumber(env, "BOOTSTRAP_THROTTLE_MS", 1000),
-    internalApiToken: env.get("INTERNAL_API_TOKEN") || undefined,
+    internalApiToken: env.INTERNAL_API_TOKEN || undefined,
+    fedifyQueue: "cloudflare",
+    crawlScheduler: "cron",
   };
 }
 
-function readFedifyQueue(env: Deno.Env): "kv" | "none" {
-  const value = env.get("FEDIFY_QUEUE") ?? "none";
-  if (value === "kv" || value === "none") return value;
-  throw new Error("FEDIFY_QUEUE must be 'kv' or 'none'");
-}
-
-function readCrawlScheduler(env: Deno.Env): "interval" | "cron" {
-  const value = env.get("CRAWL_SCHEDULER") ?? "interval";
-  if (value === "interval" || value === "cron") return value;
-  throw new Error("CRAWL_SCHEDULER must be 'interval' or 'cron'");
-}
-
-function readNumber(env: Deno.Env, name: string, fallback: number): number {
-  const value = env.get(name);
+function readNumber(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+): number {
   if (value == null || value.trim() === "") return fallback;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${name} must be a non-negative number`);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+    throw new Error(`Expected an integer >= ${minimum}, got ${value}`);
   }
   return parsed;
-}
-
-function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
 }

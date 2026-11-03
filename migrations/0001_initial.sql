@@ -1,0 +1,12 @@
+CREATE TABLE apps (id TEXT PRIMARY KEY, updated_at REAL NOT NULL, data TEXT NOT NULL);
+CREATE INDEX apps_updated ON apps(updated_at DESC);
+CREATE TABLE releases (app_id TEXT NOT NULL, fingerprint TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(app_id, fingerprint));
+CREATE TABLE posts (app_id TEXT NOT NULL, fingerprint TEXT NOT NULL, kind TEXT NOT NULL, published_at TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(app_id, fingerprint));
+CREATE INDEX posts_published ON posts(published_at DESC);
+CREATE INDEX posts_kind_published ON posts(kind, published_at DESC);
+CREATE TABLE followers (app_id TEXT NOT NULL, actor_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(app_id, actor_id));
+CREATE TABLE feed_snapshots (feed_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE state (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE actor_keys (app_id TEXT NOT NULL, key_type TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(app_id, key_type));
+CREATE TABLE fedify_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL);
+CREATE INDEX fedify_kv_expiry ON fedify_kv(expires_at);

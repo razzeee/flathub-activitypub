@@ -1,5 +1,3 @@
-import { crypto } from "@std/crypto/crypto";
-import { encodeHex } from "@std/encoding/hex";
 import type { AppstreamRelease } from "./flathub/client.ts";
 import type { AppProfile, PostKind } from "./store/types.ts";
 
@@ -230,5 +228,5 @@ async function sha256(value: string): Promise<string> {
     "SHA-256",
     new TextEncoder().encode(value),
   );
-  return encodeHex(digest);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

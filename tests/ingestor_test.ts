@@ -1,24 +1,22 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { test } from "vitest";
+import { assertEquals, assertRejects, openDatabase } from "./helpers.ts";
 import type { Config } from "../src/config.ts";
 import { createFedifyFederation } from "../src/federation/fedify.ts";
 import { Ingestor } from "../src/ingestion/ingestor.ts";
-import { createRepositories } from "../src/store/kv_store.ts";
+import { createRepositories } from "../src/store/d1_store.ts";
 import { FakeFlathubClient } from "../src/testing/fake_client.ts";
 
 const config: Config = {
   origin: "https://example.org",
-  port: 8000,
   fedifyQueue: "none",
   flathubApiBase: "https://flathub.org/api/v2",
   recentlyUpdatedPerPage: 2,
   recentlyUpdatedOverlapSeconds: 3600,
-  crawlScheduler: "interval",
-  crawlIntervalSeconds: 300,
-  bootstrapThrottleMs: 0,
+  crawlScheduler: "cron",
 };
 
-Deno.test("bootstrap publishes only the latest described release and stores older fingerprints", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("bootstrap publishes only the latest described release and stores older fingerprints", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -48,18 +46,15 @@ Deno.test("bootstrap publishes only the latest described release and stores olde
       (await repos.apps.get("org.example.App"))?.descriptionHtml,
       "<p>Long <strong>description</strong></p>",
     );
-    let releases = 0;
-    for await (
-      const _entry of kv.list({ prefix: ["release", "org.example.App"] })
-    ) releases++;
+    const releases = await kv.prepare("SELECT count(*) AS count FROM releases WHERE app_id=?").bind("org.example.App").first("count");
     assertEquals(releases, 2);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("bootstrap ignores future-dated releases when choosing latest", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("bootstrap ignores future-dated releases when choosing latest", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -89,12 +84,12 @@ Deno.test("bootstrap ignores future-dated releases when choosing latest", async 
     assertEquals(posts[0].contentHtml.includes("Example Current"), true);
     assertEquals(posts[0].publishedAt, "1970-01-01T00:03:20.000Z");
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("poll creates release posts without treating local first-seen apps as new", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("poll creates release posts without treating local first-seen apps as new", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -119,17 +114,18 @@ Deno.test("poll creates release posts without treating local first-seen apps as 
     assertEquals((await repos.releases.listRecentPosts("new-app")).length, 0);
     assertEquals((await repos.state.getCrawlState())?.watermarkUpdatedAt, 100);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("poll delivery materializes actor keys before sending activities", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("poll delivery materializes actor keys before sending activities", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const federation = createFedifyFederation(
-      { ...config, fedifyQueue: "kv" },
+      { ...config, fedifyQueue: "cloudflare" },
       kv,
+      { enqueue: async () => {}, listen: async () => {} },
     );
     const client = new FakeFlathubClient();
     client.pages.set(1, {
@@ -154,12 +150,12 @@ Deno.test("poll delivery materializes actor keys before sending activities", asy
 
     assertEquals((await repos.releases.listRecentPosts("release")).length, 1);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("poll retries queued release delivery after transient delivery failure", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("poll retries queued release delivery after transient delivery failure", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -215,12 +211,12 @@ Deno.test("poll retries queued release delivery after transient delivery failure
     assertEquals(post.deliveryState, "delivered");
     assertEquals(sends >= 3, true);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("poll skips releases without description", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("poll skips releases without description", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -241,12 +237,12 @@ Deno.test("poll skips releases without description", async () => {
     assertEquals((await repos.releases.listRecentPosts("release")).length, 0);
     assertEquals((await repos.releases.listRecentPosts("new-app")).length, 0);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("recently-added feed baselines first, then publishes official new app posts", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("recently-added feed baselines first, then publishes official new app posts", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -314,12 +310,12 @@ Deno.test("recently-added feed baselines first, then publishes official new app 
       200,
     );
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("recently-added feed does not establish an empty zero baseline", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("recently-added feed does not establish an empty zero baseline", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -357,12 +353,12 @@ Deno.test("recently-added feed does not establish an empty zero baseline", async
       300,
     );
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("poll stores app-list feed snapshots from Flathub collection APIs", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("poll stores app-list feed snapshots from Flathub collection APIs", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -403,12 +399,12 @@ Deno.test("poll stores app-list feed snapshots from Flathub collection APIs", as
     assertEquals(trending.map((app) => app.appId), ["org.trending.App"]);
     assertEquals(popular.map((app) => app.appId), ["org.popular.App"]);
   } finally {
-    kv.close();
+    await close();
   }
 });
 
-Deno.test("poll does not advance watermark when AppStream fetch fails", async () => {
-  const kv = await Deno.openKv(":memory:");
+test("poll does not advance watermark when AppStream fetch fails", async () => {
+  const { db: kv, close } = await openDatabase();
   try {
     const repos = createRepositories(kv);
     const client = new FakeFlathubClient();
@@ -428,6 +424,6 @@ Deno.test("poll does not advance watermark when AppStream fetch fails", async ()
 
     assertEquals(await repos.state.getCrawlState(), null);
   } finally {
-    kv.close();
+    await close();
   }
 });

@@ -5,7 +5,9 @@ import {
   generateCryptoKeyPair,
   importJwk,
 } from "@fedify/fedify";
-import { DenoKvMessageQueue, DenoKvStore } from "@fedify/denokv";
+import type { MessageQueue } from "@fedify/fedify";
+import { D1KvStore } from "../store/fedify_kv.ts";
+import { logEvent } from "../log.ts";
 import {
   Accept,
   Announce,
@@ -23,7 +25,7 @@ import {
 import type { Config } from "../config.ts";
 import { announceActivityId, appActorSummary } from "./activity.ts";
 import { getCollectionActor } from "./collections.ts";
-import type { Repositories } from "../store/kv_store.ts";
+import type { Repositories } from "../store/d1_store.ts";
 
 interface JwkKeyPairRecord {
   privateKey: JsonWebKey;
@@ -36,14 +38,14 @@ export interface FederationData {
 
 export function createFedifyFederation(
   config: Config,
-  kv: Deno.Kv,
+  db: D1Database,
+  queue?: MessageQueue,
 ): Federation<FederationData> {
   const federation = createFederation<FederationData>({
     origin: config.origin,
-    kv: new DenoKvStore(kv),
-    ...(config.fedifyQueue === "kv"
-      ? { queue: new DenoKvMessageQueue(kv), manuallyStartQueue: true }
-      : {}),
+    kv: new D1KvStore(db),
+    queue,
+    manuallyStartQueue: true,
     permanentFailureStatusCodes: [404, 410, 451],
   });
 
@@ -73,32 +75,31 @@ export function createFedifyFederation(
       });
     })
     .setKeyPairsDispatcher(async (_ctx, identifier) => {
-      return await getOrCreateActorKeyPairs(kv, identifier);
+      return await getOrCreateActorKeyPairs(db, identifier);
     });
 
-  federation
-    .setFollowersDispatcher(
-      "/apps/{identifier}/followers",
-      async (ctx, identifier, _cursor, baseUri) => {
-        const profile = await ctx.data.repos.apps.get(identifier);
-        const collection = getCollectionActor(identifier);
-        if (!profile && !collection) return null;
-        let followers = await ctx.data.repos.followers.list(identifier);
-        if (baseUri != null) {
-          followers = followers.filter((follower) =>
-            follower.actorId.startsWith(baseUri.href)
-          );
-        }
-        const items: Recipient[] = followers.map((follower) => ({
-          id: new URL(follower.actorId),
-          inboxId: new URL(follower.inboxUrl),
-          endpoints: follower.sharedInboxUrl
-            ? { sharedInbox: new URL(follower.sharedInboxUrl) }
-            : undefined,
-        }));
-        return { items };
-      },
-    );
+  federation.setFollowersDispatcher(
+    "/apps/{identifier}/followers",
+    async (ctx, identifier, _cursor, baseUri) => {
+      const profile = await ctx.data.repos.apps.get(identifier);
+      const collection = getCollectionActor(identifier);
+      if (!profile && !collection) return null;
+      let followers = await ctx.data.repos.followers.list(identifier);
+      if (baseUri != null) {
+        followers = followers.filter((follower) =>
+          follower.actorId.startsWith(baseUri.href),
+        );
+      }
+      const items: Recipient[] = followers.map((follower) => ({
+        id: new URL(follower.actorId),
+        inboxId: new URL(follower.inboxUrl),
+        endpoints: follower.sharedInboxUrl
+          ? { sharedInbox: new URL(follower.sharedInboxUrl) }
+          : undefined,
+      }));
+      return { items };
+    },
+  );
 
   federation.setOutboxDispatcher(
     "/apps/{identifier}/outbox",
@@ -112,51 +113,54 @@ export function createFedifyFederation(
           collection.postKind,
         );
         return {
-          items: posts.map((post) =>
-            new Announce({
-              id: new URL(announceActivityId(post, collection.id)),
-              actor,
-              to: PUBLIC_COLLECTION,
-              cc: followers,
-              object: new URL(post.noteId),
-            })
+          items: posts.map(
+            (post) =>
+              new Announce({
+                id: new URL(announceActivityId(post, collection.id)),
+                actor,
+                to: PUBLIC_COLLECTION,
+                cc: followers,
+                object: new URL(post.noteId),
+              }),
           ),
         };
       }
       if (collection?.type === "app-list") {
         const apps = await ctx.data.repos.feeds.listAppProfiles(collection.id);
         return {
-          items: apps.map((app) =>
-            new Announce({
-              id: new URL(
-                `${actor.href}/announces/${encodeURIComponent(app.appId)}`,
-              ),
-              actor,
-              to: PUBLIC_COLLECTION,
-              cc: followers,
-              object: ctx.getActorUri(app.appId),
-            })
+          items: apps.map(
+            (app) =>
+              new Announce({
+                id: new URL(
+                  `${actor.href}/announces/${encodeURIComponent(app.appId)}`,
+                ),
+                actor,
+                to: PUBLIC_COLLECTION,
+                cc: followers,
+                object: ctx.getActorUri(app.appId),
+              }),
           ),
         };
       }
       if (!profile) return null;
       const posts = await ctx.data.repos.releases.listPosts(identifier);
       return {
-        items: posts.map((post) =>
-          new Create({
-            id: new URL(post.createActivityId),
-            actor,
-            to: PUBLIC_COLLECTION,
-            cc: followers,
-            object: new Note({
-              id: new URL(post.noteId),
-              attribution: actor,
+        items: posts.map(
+          (post) =>
+            new Create({
+              id: new URL(post.createActivityId),
+              actor,
               to: PUBLIC_COLLECTION,
               cc: followers,
-              content: post.contentHtml,
-              url: new URL(post.noteId),
+              object: new Note({
+                id: new URL(post.noteId),
+                attribution: actor,
+                to: PUBLIC_COLLECTION,
+                cc: followers,
+                content: post.contentHtml,
+                url: new URL(post.noteId),
+              }),
             }),
-          })
         ),
       };
     },
@@ -164,6 +168,34 @@ export function createFedifyFederation(
 
   federation
     .setInboxListeners("/apps/{identifier}/inbox", "/inbox")
+    .onRequestFinished((_ctx, report) => {
+      logEvent("federation.inbox", {
+        authentication: report.authentication.status,
+        outcome: report.outcome.type,
+        status:
+          report.outcome.type === "response"
+            ? report.outcome.status
+            : undefined,
+        attempts: report.attempts.map((attempt) => ({
+          mechanism: attempt.mechanism,
+          status: attempt.status,
+          reason:
+            attempt.status === "rejected" ? attempt.reason.type : undefined,
+          checks: attempt.checks.map((check) => ({
+            mechanism: check.mechanism,
+            status: check.status,
+            reason: check.status === "rejected" ? check.reason.type : undefined,
+            fetchFailure:
+              check.status === "rejected" &&
+              check.reason.type === "keyFetchError"
+                ? "error" in check.reason.result
+                  ? check.reason.result.error.name
+                  : check.reason.result.status
+                : undefined,
+          })),
+        })),
+      });
+    })
     .on(Follow, async (ctx, follow) => {
       if (follow.objectId == null) return;
       const parsed = ctx.parseUri(follow.objectId);
@@ -173,7 +205,9 @@ export function createFedifyFederation(
       if (!profile && !collection) return;
       const follower = await follow.getActor(ctx);
       if (
-        !isActor(follower) || follower.id == null || follower.inboxId == null
+        !isActor(follower) ||
+        follower.id == null ||
+        follower.inboxId == null
       ) {
         return;
       }
@@ -215,35 +249,41 @@ export function createFedifyFederation(
   return federation;
 }
 
-async function* appIdsFromActivity(
-  activity: { actorId?: URL | null },
-): AsyncIterable<string> {
+async function* appIdsFromActivity(activity: {
+  actorId?: URL | null;
+}): AsyncIterable<string> {
   if (activity.actorId == null) return;
   const parts = activity.actorId.pathname.split("/").filter(Boolean);
   if (parts[0] === "apps" && parts[1]) yield decodeURIComponent(parts[1]);
 }
 
 async function getOrCreateActorKeyPairs(
-  kv: Deno.Kv,
+  db: D1Database,
   appId: string,
 ): Promise<CryptoKeyPair[]> {
-  const rsa = await getOrCreateKeyPair(kv, appId, "rsa", "RSASSA-PKCS1-v1_5");
-  const ed25519 = await getOrCreateKeyPair(kv, appId, "ed25519", "Ed25519");
+  const rsa = await getOrCreateKeyPair(db, appId, "rsa", "RSASSA-PKCS1-v1_5");
+  const ed25519 = await getOrCreateKeyPair(db, appId, "ed25519", "Ed25519");
   return [rsa, ed25519];
 }
 
 async function getOrCreateKeyPair(
-  kv: Deno.Kv,
+  db: D1Database,
   appId: string,
   keyType: string,
   algorithm: "RSASSA-PKCS1-v1_5" | "Ed25519",
 ): Promise<CryptoKeyPair> {
-  const key = ["keypair", appId, keyType];
-  const existing = await kv.get<JwkKeyPairRecord>(key);
-  if (existing.value) {
+  const load = async (): Promise<JwkKeyPairRecord | null> => {
+    const row = await db
+      .prepare("SELECT data FROM actor_keys WHERE app_id=? AND key_type=?")
+      .bind(appId, keyType)
+      .first<{ data: string }>();
+    return row ? (JSON.parse(row.data) as JwkKeyPairRecord) : null;
+  };
+  const existing = await load();
+  if (existing) {
     return {
-      privateKey: await importJwk(existing.value.privateKey, "private"),
-      publicKey: await importJwk(existing.value.publicKey, "public"),
+      privateKey: await importJwk(existing.privateKey, "private"),
+      publicKey: await importJwk(existing.publicKey, "public"),
     };
   }
 
@@ -252,13 +292,16 @@ async function getOrCreateKeyPair(
     privateKey: await exportJwk(generated.privateKey),
     publicKey: await exportJwk(generated.publicKey),
   };
-  const result = await kv.atomic().check(existing).set(key, record).commit();
-  if (result.ok) return generated;
+  const result = await db
+    .prepare("INSERT OR IGNORE INTO actor_keys VALUES (?, ?, ?)")
+    .bind(appId, keyType, JSON.stringify(record))
+    .run();
+  if (result.meta.changes > 0) return generated;
 
-  const saved = await kv.get<JwkKeyPairRecord>(key);
-  if (!saved.value) throw new Error(`failed to create keypair for ${appId}`);
+  const saved = await load();
+  if (!saved) throw new Error(`failed to create keypair for ${appId}`);
   return {
-    privateKey: await importJwk(saved.value.privateKey, "private"),
-    publicKey: await importJwk(saved.value.publicKey, "public"),
+    privateKey: await importJwk(saved.privateKey, "private"),
+    publicKey: await importJwk(saved.publicKey, "public"),
   };
 }

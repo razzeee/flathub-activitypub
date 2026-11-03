@@ -1,10 +1,11 @@
-import { assertEquals } from "@std/assert";
+import { test } from "vitest";
+import { assertEquals } from "./helpers.ts";
 import {
   parseAppstreamApp,
   parseRecentlyUpdatedPage,
 } from "../src/flathub/client.ts";
 
-Deno.test("parseRecentlyUpdatedPage maps Flathub fields", () => {
+test("parseRecentlyUpdatedPage maps Flathub fields", () => {
   const page = parseRecentlyUpdatedPage({
     page: 2,
     hitsPerPage: 1,
@@ -30,7 +31,7 @@ Deno.test("parseRecentlyUpdatedPage maps Flathub fields", () => {
   });
 });
 
-Deno.test("parseAppstreamApp keeps release fields", () => {
+test("parseAppstreamApp keeps release fields", () => {
   const app = parseAppstreamApp("org.example.App", {
     name: "Example",
     summary: "Example summary",

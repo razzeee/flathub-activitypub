@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "flathub-activitypub",
+  "main": "src/main.ts",
+  "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    "ORIGIN": "http://localhost:8787",
+    "RECENTLY_UPDATED_PER_PAGE": "10",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flathub-activitypub",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "FEDERATION_QUEUE", "queue": "flathub-federation" },
+      { "binding": "INGESTION_QUEUE", "queue": "flathub-ingestion" },
+    ],
+    "consumers": [
+      {
+        "queue": "flathub-federation",
+        "max_batch_size": 1,
+        "max_retries": 10,
+        "dead_letter_queue": "flathub-dead-letter",
+      },
+      {
+        "queue": "flathub-ingestion",
+        "max_batch_size": 1,
+        "max_concurrency": 1,
+        "max_retries": 10,
+        "dead_letter_queue": "flathub-dead-letter",
+      },
+    ],
+  },
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true },
+}

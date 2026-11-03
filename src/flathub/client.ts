@@ -36,10 +36,22 @@ export interface AppstreamApp {
   releases: AppstreamRelease[];
 }
 
+export class FlathubRequestError extends Error {
+  constructor(
+    readonly status: number,
+    url: URL,
+  ) {
+    super(`Flathub request failed: ${status} ${url}`);
+    this.name = "FlathubRequestError";
+  }
+}
+
 export class FlathubClient {
   constructor(
     private readonly apiBase: string,
-    private readonly fetcher = fetch,
+    // Workers' native fetch rejects a FlathubClient instance as its receiver.
+    private readonly fetcher: typeof fetch = (input, init) =>
+      fetch(input, init),
   ) {}
 
   async recentlyUpdated(
@@ -81,7 +93,8 @@ export class FlathubClient {
   private async fetchJson(url: URL): Promise<unknown> {
     const response = await retry(async () => await this.fetcher(url));
     if (!response.ok) {
-      throw new Error(`Flathub request failed: ${response.status} ${url}`);
+      await response.body?.cancel();
+      throw new FlathubRequestError(response.status, url);
     }
     return await response.json();
   }

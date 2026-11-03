@@ -9,27 +9,28 @@ permissions:
   contents: read
 
 jobs:
-  deno:
-    name: Deno
+  workers:
+    name: Cloudflare Workers
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
-      - name: Check formatting
-        run: deno fmt --check
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: deno task check
-
-      - name: Lint
-        run: deno task lint
+        run: pnpm check
 
       - name: Test
-        run: deno task test
+        run: pnpm test

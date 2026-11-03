@@ -114,6 +114,64 @@ Watermarks are the stored high-water marks that make poll crawlers incremental:
 - `INTERNAL_API_TOKEN`: bearer token required for `POST /internal/ingest/*`;
   when unset, internal ingestion routes return 404.
 
+## Production releases
+
+Pushes to `main` run type-checking and all tests, then wait for approval in the
+GitHub **production** environment before applying D1 migrations and deploying the
+exact tested commit. Pull requests never deploy or receive deployment credentials.
+Production deployments are serialized without canceling an active migration;
+superseded commits are rejected immediately before migration/deployment. A newer
+push does not cancel an already-started release. Health and readiness checks run
+after deployment; failure does not automatically roll back code or database.
+
+### One-time production setup
+
+Use Workers Paid: signing-key generation and Fedify processing can exceed the
+Free plan's 10 ms CPU allowance.
+
+1. Create a **new production** D1 database named `flathub-activitypub` and queues
+   `flathub-dead-letter`, `flathub-federation`, and `flathub-ingestion` (dead-letter
+   first). Keep production resources separate from test instances.
+2. Select the permanent HTTPS origin. For a custom domain, its zone must be in
+   the Cloudflare account and permit a Worker Custom Domain; deployment configures
+   that domain automatically and disables `workers.dev`. Alternatively explicitly
+   select `https://flathub-activitypub.<account-subdomain>.workers.dev`.
+   The origin has no trailing slash. Changing it later changes federation identity.
+3. In repository **Settings → Environments → production**, configure:
+
+   | Kind     | Name                        | Value                                     |
+   | -------- | --------------------------- | ----------------------------------------- |
+   | Variable | `CLOUDFLARE_ACCOUNT_ID`     | Production account ID                     |
+   | Variable | `PRODUCTION_D1_DATABASE_ID` | UUID returned when creating production D1 |
+   | Variable | `PRODUCTION_ORIGIN`         | Permanent public HTTPS origin             |
+   | Secret   | `CLOUDFLARE_API_TOKEN`      | Dedicated deployment API token            |
+
+   Restrict the environment to the `main` **branch**, require `razzeee` approval,
+   and disallow administrator bypass. Self-review is allowed so the repository
+   owner can approve their own releases. These protections are repository settings,
+   not enforced by the workflow file: preserve them when changing settings.
+
+   Use a dedicated, account-scoped Cloudflare token with Workers Scripts, D1, and
+   Queues permissions. Custom Domains also require the appropriate zone/Workers
+   Routes permissions.
+
+4. After a push to `main` passes CI, approve the pending production deployment
+   in Actions. Missing/placeholder settings fail before remote changes.
+
+The workflow generates ignored `.data/wrangler.production.json` from the checked-in
+Wrangler configuration. Local development keeps its localhost origin and placeholder
+database ID. The first production deploy enables the five-minute cron and starts
+ingestion.
+
+`INTERNAL_API_TOKEN` is optional and is **not** synchronized by CI. If manual
+ingestion endpoints are needed, set it once with `wrangler secret put` for the
+production Worker; otherwise those routes remain disabled. Subsequent deploys
+preserve Worker secrets.
+
+Schema migrations run before code is deployed: keep them backward compatible with
+the currently running Worker. For a rollback, revert via a new `main` commit and
+run CI/approval again; do not rerun an old workflow or assume D1 changes are undone.
+
 ## Deploy a test instance
 
 Start with a **separate database, queues, and test origin**, not the existing

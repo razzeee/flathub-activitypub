@@ -34,3 +34,68 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  deploy:
+    name: Deploy production
+    needs: workers
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_ORIGIN }}
+    concurrency:
+      group: production-deployment
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_ORIGIN }}
+      PRODUCTION_D1_DATABASE_ID: ${{ vars.PRODUCTION_D1_DATABASE_ID }}
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate production configuration
+        run: node scripts/production-config.ts
+
+      # Check after environment approval and dependency installation, immediately
+      # before mutations. Re-running an old successful workflow cannot roll back prod.
+      - name: Reject superseded commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'Refusing deployment: this commit is no longer the main branch head.' >&2
+            exit 1
+          fi
+
+      - name: Apply production D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec wrangler d1 migrations apply DB --remote --config .data/wrangler.production.json
+
+      - name: Deploy production Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm exec wrangler deploy --config .data/wrangler.production.json
+
+      - name: Check production readiness
+        timeout-minutes: 7
+        run: |
+          curl --fail-with-body --silent --show-error --retry 10 --retry-all-errors --retry-delay 10 --retry-max-time 180 --connect-timeout 10 --max-time 15 "$PRODUCTION_ORIGIN/healthz"
+          curl --fail-with-body --silent --show-error --retry 10 --retry-all-errors --retry-delay 10 --retry-max-time 180 --connect-timeout 10 --max-time 15 "$PRODUCTION_ORIGIN/readyz"

@@ -67,8 +67,7 @@ export class Ingestor {
         : kind === "bootstrap"
           ? "bootstrap"
           : "updated",
-      // Legacy bootstrap pages have no page-size metadata. Only a durable
-      // CrawlJob is safe to resume; replaying from page one is idempotent.
+      // Resume only durable CrawlJob cursors; bootstrap progress is for status.
       page: 1,
       perPage: this.config.recentlyUpdatedPerPage,
       index: 0,

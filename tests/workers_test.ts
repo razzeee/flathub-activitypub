@@ -13,7 +13,6 @@ import { Ingestor, type CrawlJob } from "../src/ingestion/ingestor.ts";
 import { FakeFlathubClient } from "../src/testing/fake_client.ts";
 import { createRepositories } from "../src/store/d1_store.ts";
 import { D1KvStore } from "../src/store/fedify_kv.ts";
-import { convertDenoExport } from "../scripts/convert-deno-export.ts";
 import { FlathubClient } from "../src/flathub/client.ts";
 
 test("a resumed crawl keeps its original page size across configuration changes", async () => {
@@ -81,7 +80,7 @@ test("a resumed crawl keeps its original page size across configuration changes"
   }
 });
 
-test("a legacy bootstrap page without page-size metadata restarts safely", async () => {
+test("bootstrap recovery restarts safely when its durable cursor is missing", async () => {
   const { db, close } = await openDatabase();
   try {
     const config = loadConfig({});
@@ -91,7 +90,7 @@ test("a legacy bootstrap page without page-size metadata restarts safely", async
       completed: false,
       updatedAt: "2026-01-01T00:00:00Z",
     });
-    expect((await app.ingestor.newJob("bootstrap", "migrated")).page).toBe(1);
+    expect((await app.ingestor.newJob("bootstrap", "restart")).page).toBe(1);
   } finally {
     await close();
   }
@@ -230,68 +229,6 @@ test.each([429, 503])(
     }
   },
 );
-
-test("legacy KV conversion preserves keys, followers, IDs, watermarks and snapshot order", async () => {
-  const { db, close } = await openDatabase();
-  try {
-    const keyData = {
-      privateKey: { kty: "RSA", d: "secret" },
-      publicKey: { kty: "RSA" },
-    };
-    const rows = [
-      {
-        key: ["app", "app"],
-        value: { appId: "app", name: "App's name", lastSeenUpdatedAt: 100 },
-      },
-      { key: ["keypair", "app", "rsa"], value: keyData },
-      {
-        key: ["follower", "app", "https://remote/actor"],
-        value: { actorId: "https://remote/actor" },
-      },
-      {
-        key: ["post", "app", "fingerprint"],
-        value: {
-          publishedAt: "2026-01-01T00:00:00Z",
-          noteId: "https://old.example/apps/app/releases/fingerprint",
-        },
-      },
-      { key: ["crawl", "recentlyUpdated"], value: { watermarkUpdatedAt: 100 } },
-      {
-        key: ["feedApp", "popular-apps", 1, "b"],
-        value: { rank: 1, appId: "b" },
-      },
-      {
-        key: ["feedApp", "popular-apps", 0, "a"],
-        value: { rank: 0, appId: "a" },
-      },
-      { key: ["appByUpdatedAt", 100, "app"], value: true },
-    ];
-    const sql = convertDenoExport(
-      rows.map((row) => JSON.stringify(row)).join("\n"),
-    );
-    await db.exec(sql);
-    const repos = createRepositories(db);
-    expect((await repos.apps.get("app"))?.name).toBe("App's name");
-    expect(
-      JSON.parse(
-        (await db
-          .prepare("SELECT data FROM actor_keys")
-          .first<string>("data"))!,
-      ),
-    ).toEqual(keyData);
-    expect((await repos.followers.list("app"))[0].actorId).toBe(
-      "https://remote/actor",
-    );
-    expect((await repos.releases.getPost("app", "fingerprint"))?.noteId).toBe(
-      "https://old.example/apps/app/releases/fingerprint",
-    );
-    expect((await repos.state.getCrawlState())?.watermarkUpdatedAt).toBe(100);
-    expect(await repos.feeds.snapshotIds("popular-apps")).toEqual(["a", "b"]);
-    await expect(db.exec(sql)).rejects.toThrow();
-  } finally {
-    await close();
-  }
-});
 
 test("D1 deduplicates concurrent post creation and keeps the original publication date", async () => {
   const { db, close } = await openDatabase();

@@ -11,7 +11,6 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "db:convert-deno": "node scripts/convert-deno-export.ts",
     "fmt": "prettier --write ."
   },
   "dependencies": {

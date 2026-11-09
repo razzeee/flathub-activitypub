@@ -17,13 +17,14 @@ import {
   Image,
   isActor,
   Note,
+  PropertyValue,
   PUBLIC_COLLECTION,
   type Recipient,
   Service,
   Undo,
 } from "@fedify/vocab";
 import type { Config } from "../config.ts";
-import { announceActivityId, appActorSummary } from "./activity.ts";
+import { announceActivityId, appActorFields, appActorSummary } from "./activity.ts";
 import { getCollectionActor } from "./collections.ts";
 import type { Repositories } from "../store/d1_store.ts";
 
@@ -60,6 +61,9 @@ export function createFedifyFederation(
         preferredUsername: identifier,
         name: profile?.name ?? collection?.name,
         summary: profile ? appActorSummary(profile) : collection?.summary,
+        attachments: profile
+          ? appActorFields(profile).map((field) => new PropertyValue(field))
+          : undefined,
         url: new URL(
           profile?.flathubUrl ?? `${config.origin}/apps/${identifier}`,
         ),

@@ -118,6 +118,24 @@ export function handler(
         contextData: { repos: context.repos },
         onNotFound: () => json({ error: "not found" }, 404),
       });
+      if (
+        request.method === "GET" &&
+        /^\/apps\/[^/]+$/.test(url.pathname) &&
+        fedifyResponse.ok &&
+        fedifyResponse.headers.get("content-type")?.includes(
+          "application/activity+json",
+        )
+      ) {
+        const actor = await fedifyResponse.json<Record<string, unknown>>();
+        // Mastodon ignores profile fields unless attachment is an array.
+        if (actor.attachment != null && !Array.isArray(actor.attachment)) {
+          actor.attachment = [actor.attachment];
+        }
+        return new Response(JSON.stringify(actor), {
+          status: fedifyResponse.status,
+          headers: fedifyResponse.headers,
+        });
+      }
       return fedifyResponse;
     } catch (error) {
       return json({

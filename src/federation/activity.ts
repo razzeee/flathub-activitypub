@@ -40,23 +40,28 @@ export function announceActivityId(
 }
 
 export function appActorSummary(profile: AppProfile): string {
-  const source = profile.descriptionHtml?.trim()
-    ? profile.descriptionHtml.trim()
-    : profile.summary
-    ? `<p>${escapeHtml(profile.summary)}</p>`
+  const source = profile.summary?.trim()
+    ? `<p>${escapeHtml(profile.summary.trim())}</p>`
     : "";
-  const name = escapeHtml(profile.name || profile.appId);
   return [
     source,
-    `<p>Unofficial ActivityPub mirror for ${name} on Flathub. Follow for release notes observed by this server.</p>`,
+    "<p>Unofficial release feed from Flathub. Not affiliated with the app developers.</p>",
   ].filter(Boolean).join("\n");
+}
+
+export function appActorFields(profile: AppProfile) {
+  return [{
+    type: "PropertyValue",
+    name: "Flathub",
+    value: `<a href="${escapeHtml(profile.flathubUrl)}" rel="me">${escapeHtml(profile.appId)}</a>`,
+  }];
 }
 
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(
     ">",
     "&gt;",
-  );
+  ).replaceAll('"', "&quot;");
 }
 
 export function actorDocument(
@@ -68,12 +73,17 @@ export function actorDocument(
     "@context": [
       "https://www.w3.org/ns/activitystreams",
       "https://w3id.org/security/v1",
+      {
+        PropertyValue: "http://schema.org/PropertyValue",
+        value: "http://schema.org/value",
+      },
     ],
     id,
     type: "Service",
     preferredUsername: profile.appId,
     name: profile.name,
     summary: appActorSummary(profile),
+    attachment: appActorFields(profile),
     url: profile.flathubUrl,
     icon: profile.iconUrl ? { type: "Image", url: profile.iconUrl } : undefined,
     inbox: `${id}/inbox`,

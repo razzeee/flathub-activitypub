@@ -10,6 +10,7 @@ import { createFedifyFederation } from "../src/federation/fedify.ts";
 interface ActorDocument {
   type: string; preferredUsername: string; name: string; summary: string;
   publicKey: { id: string }; endpoints: { sharedInbox: string };
+  attachment: { type: string; name: string; value: string }[];
 }
 interface OutboxDocument {
   totalItems: number;
@@ -61,9 +62,23 @@ test("actor and WebFinger routes expose ingested app", async () => {
     assertEquals(actor.name, "Firefox");
     assertStringIncludes(actor.summary, "A &lt;web&gt; browser &amp; more");
     assertEquals(actor.summary.includes("A <web> browser & more"), false);
-    assertStringIncludes(actor.summary, "Unofficial ActivityPub mirror");
+    assertStringIncludes(actor.summary, "Unofficial release feed from Flathub");
+    assertStringIncludes(actor.summary, "Not affiliated with the app developers");
+    assertEquals(actor.attachment, [{
+      type: "PropertyValue",
+      name: "Flathub",
+      value: '<a href="https://flathub.org/apps/org.mozilla.firefox" rel="me">org.mozilla.firefox</a>',
+    }]);
     assertEquals(typeof actor.publicKey.id, "string");
     assertEquals(actor.endpoints.sharedInbox, "https://example.org/inbox");
+
+    const ldResponse = await serve(
+      new Request("https://example.org/apps/org.mozilla.firefox", {
+        headers: { accept: 'application/ld+json; profile="https://www.w3.org/ns/activitystreams"' },
+      }),
+    );
+    const ldActor = await ldResponse.json<ActorDocument>();
+    assertEquals(ldActor.attachment, actor.attachment);
 
     const describedActorResponse = await serve(
       new Request("https://example.org/apps/org.gnome.TextEditor", {
@@ -73,9 +88,9 @@ test("actor and WebFinger routes expose ingested app", async () => {
     const describedActor = await describedActorResponse.json<ActorDocument>();
     assertStringIncludes(
       describedActor.summary,
-      "<p>Long <strong>description</strong></p>",
+      "<p>Plain summary</p>",
     );
-    assertEquals(describedActor.summary.includes("Plain summary"), false);
+    assertEquals(describedActor.summary.includes("Long"), false);
 
     const wfResponse = await serve(
       new Request(
@@ -93,6 +108,7 @@ test("actor and WebFinger routes expose ingested app", async () => {
     const feedActor = await feedActorResponse.json<ActorDocument>();
     assertEquals(feedActor.type, "Service");
     assertEquals(feedActor.preferredUsername, "recent-releases");
+    assertEquals(feedActor.attachment, undefined);
 
     const feedWfResponse = await serve(
       new Request(

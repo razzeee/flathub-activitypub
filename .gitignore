@@ -21,5 +21,7 @@ coverage/
 node_modules/
 .wrangler/
 dist/
+public/styles.css
+public/ui.js
 .dev.vars
 .dev.vars.*

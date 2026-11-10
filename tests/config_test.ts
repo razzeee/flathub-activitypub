@@ -19,6 +19,8 @@ test("deployment enables public Worker-to-Worker federation routing", async () =
 const base = {
   name: "flathub-activitypub",
   main: "src/main.ts",
+  assets: { directory: "public" },
+  build: { command: "pnpm build:assets", cwd: ".", watch_dir: "src" },
   vars: { ORIGIN: "http://localhost:8787" },
   d1_databases: [{ binding: "DB", migrations_dir: "migrations" }],
   queues: { consumers: [{ queue: "flathub-federation" }] },
@@ -43,6 +45,14 @@ test("production config binds a custom domain and preserves queues and cron", ()
     migrations_dir: "/repo/migrations",
   });
   expect(config.main).toBe("/repo/src/main.ts");
+  expect(config.assets.directory).toBe("/repo/public");
+  expect(base.assets.directory).toBe("public");
+  expect(config.build).toEqual({
+    command: "pnpm build:assets",
+    cwd: "/repo",
+    watch_dir: "src",
+  });
+  expect(base.build.cwd).toBe(".");
   expect(config.queues).toEqual(base.queues);
   expect(config.triggers).toEqual(base.triggers);
   expect(base.vars.ORIGIN).toBe("http://localhost:8787");

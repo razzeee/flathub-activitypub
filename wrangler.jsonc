@@ -2,6 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "flathub-activitypub",
   "main": "src/main.ts",
+  "assets": { "directory": "public" },
+  "build": { "command": "pnpm build:assets", "cwd": ".", "watch_dir": "src" },
   "compatibility_date": "2026-11-03",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "vars": {

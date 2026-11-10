@@ -33,7 +33,7 @@ test("actor and WebFinger routes expose ingested app", async () => {
     await repos.apps.upsertFromHit({
       appId: "org.mozilla.firefox",
       name: "Firefox",
-      summary: "A <web> browser & more",
+      summary: 'A <web> browser & "more"',
       updatedAt: 1,
     });
     await repos.apps.upsertFromHit({
@@ -60,8 +60,8 @@ test("actor and WebFinger routes expose ingested app", async () => {
     assertEquals(actor.type, "Service");
     assertEquals(actor.preferredUsername, "org.mozilla.firefox");
     assertEquals(actor.name, "Firefox");
-    assertStringIncludes(actor.summary, "A &lt;web&gt; browser &amp; more");
-    assertEquals(actor.summary.includes("A <web> browser & more"), false);
+    assertStringIncludes(actor.summary, "A &lt;web&gt; browser &amp; &quot;more&quot;");
+    assertEquals(actor.summary.includes('A <web> browser & "more"'), false);
     assertStringIncludes(actor.summary, "Unofficial release feed from Flathub");
     assertStringIncludes(actor.summary, "Not affiliated with the app developers");
     assertEquals(actor.attachment, [{
@@ -117,6 +117,43 @@ test("actor and WebFinger routes expose ingested app", async () => {
     );
     const feedWf = await feedWfResponse.json<{ subject: string }>();
     assertEquals(feedWf.subject, "acct:recent-releases@example.org");
+
+    const landing = await (await serve(new Request(config.origin))).text();
+    assertStringIncludes(landing, "Release notes in your timeline");
+    assertStringIncludes(
+      landing,
+      'data-app-search="Firefox org.mozilla.firefox A &lt;web&gt; browser &amp; &quot;more&quot;"',
+    );
+    const profilePage = await (await serve(
+      new Request(`${config.origin}/apps/org.mozilla.firefox`),
+    )).text();
+    assertStringIncludes(
+      profilePage,
+      'data-copy-handle="@org.mozilla.firefox@example.org"',
+    );
+  } finally {
+    await close();
+  }
+});
+
+test("an empty directory offers feeds without an unusable app filter", async () => {
+  const { db, close } = await openDatabase();
+  try {
+    const repos = createRepositories(db);
+    const serve = handler({
+      config,
+      repos,
+      ingestor: new Ingestor(config, new FakeFlathubClient() as never, repos),
+      federation: createFedifyFederation(config, db),
+    });
+    const response = await serve(new Request(config.origin));
+    const page = await response.text();
+    assertEquals(response.status, 200);
+    assertStringIncludes(page, "No apps indexed yet");
+    assertStringIncludes(page, 'href="#feed-actors">Browse the feeds</a>');
+    assertStringIncludes(page, 'href="/apps/recent-releases"');
+    assertStringIncludes(page, 'href="/apps/new-apps"');
+    assertEquals(page.includes('id="app-search"'), false);
   } finally {
     await close();
   }
@@ -176,7 +213,7 @@ test("browser pages list apps and inline releases", async () => {
       noteId: "https://example.org/apps/org.gnome.Calculator/posts/new-app",
       createActivityId:
         "https://example.org/apps/org.gnome.Calculator/posts/new-app#create",
-      contentHtml: "<p>Calculator was added to Flathub.</p>",
+      contentHtml: "<p>Calculator was added to Flathub.</p><p>For &lt;simple&gt; &amp; everyday maths.</p>",
       publishedAt: "1970-01-01T00:01:42.000Z",
       deliveryState: "queued",
     });
@@ -199,7 +236,22 @@ test("browser pages list apps and inline releases", async () => {
     const landingResponse = await serve(new Request("https://example.org/"));
     const landing = await landingResponse.text();
     assertEquals(landingResponse.status, 200);
-    assertStringIncludes(landing, "Flathub apps can post now");
+    assertStringIncludes(landing, ">Follow app updates</h1>");
+    assertStringIncludes(landing, '<link rel="stylesheet" href="/styles.css">');
+    assertStringIncludes(landing, '<script type="module" src="/ui.js"></script>');
+    assertEquals(landing.includes("<style>"), false);
+    assertStringIncludes(landing, 'id="app-search"');
+    assertStringIncludes(landing, "Latest from Flathub");
+    assertStringIncludes(landing, "Calculator was added to Flathub.");
+    assertStringIncludes(
+      landing,
+      '>Calculator was added to Flathub. For &lt;simple&gt; &amp; everyday maths.</p>',
+    );
+    assertStringIncludes(
+      landing,
+      'href="/apps/org.gnome.Calculator#post-org.gnome.Calculator-new-app"',
+    );
+    assertEquals(landing.includes("Firefox 1.0.0"), false);
     assertStringIncludes(landing, 'href="/apps/recent-releases"');
     assertStringIncludes(landing, 'href="/apps/new-apps"');
     assertStringIncludes(landing, 'href="/apps/trending-apps"');

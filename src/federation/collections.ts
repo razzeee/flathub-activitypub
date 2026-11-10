@@ -30,7 +30,7 @@ export const COLLECTION_ACTORS: CollectionActorProfile[] = [
   {
     id: "recent-releases",
     name: "Recent releases",
-    summary: "Release notes as they land",
+    summary: "Release notes from Flathub apps",
     type: "post",
     postKind: "release",
     flathubCollection: "recently-updated",
@@ -38,7 +38,7 @@ export const COLLECTION_ACTORS: CollectionActorProfile[] = [
   {
     id: "new-apps",
     name: "New apps",
-    summary: "Apps that just arrived",
+    summary: "Apps recently added to Flathub",
     type: "post",
     postKind: "new-app",
     flathubCollection: "recently-added",
@@ -46,14 +46,14 @@ export const COLLECTION_ACTORS: CollectionActorProfile[] = [
   {
     id: "trending-apps",
     name: "Trending apps",
-    summary: "Apps people are checking out now",
+    summary: "Apps in Flathub's trending list",
     type: "app-list",
     flathubCollection: "trending",
   },
   {
     id: "popular-apps",
     name: "Popular apps",
-    summary: "The most-followed app shelf",
+    summary: "Apps in Flathub's popular list",
     type: "app-list",
     flathubCollection: "popular",
   },

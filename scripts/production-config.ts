@@ -46,6 +46,12 @@ export function productionConfig(
     ...base,
     account_id: account,
     main: resolve(root, base.main),
+    ...(base.build ? {
+      build: { ...base.build, cwd: resolve(root, base.build.cwd ?? ".") },
+    } : {}),
+    ...(base.assets ? {
+      assets: { ...base.assets, directory: resolve(root, base.assets.directory) },
+    } : {}),
     workers_dev: workersDev,
     preview_urls: false,
     routes: workersDev

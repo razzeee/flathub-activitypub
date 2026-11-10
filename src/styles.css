@@ -1,0 +1,163 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./server.ts";
+
+@custom-variant desktop (@media (min-width: 1001px));
+@custom-variant tablet (@media (max-width: 1000px));
+@custom-variant mobile (@media (max-width: 760px));
+@custom-variant phone (@media (max-width: 480px));
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-action: var(--blue);
+  --color-action-hover: var(--blue-hover);
+  --color-soft: var(--soft);
+  --font-display: "Bricolage Grotesque", "Noto Sans", sans-serif;
+  --font-body: "Noto Sans", "Segoe UI", sans-serif;
+}
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/fonts/bricolage-grotesque-latin-v9.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+    --page: #fff;
+    --surface: #fff;
+    --ink: #17243b;
+    --muted: #59677d;
+    --line: #dce3ee;
+    --blue: #1764c0;
+    --blue-hover: #155bb1;
+    --soft: #eef3fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #152031;
+      --surface: #1e2c40;
+      --ink: #edf2fb;
+      --muted: #afbdd0;
+      --line: #36465e;
+      --blue: #8bbcff;
+      --blue-hover: #b5d5ff;
+      --soft: #223852;
+    }
+  }
+  * {
+    box-sizing: border-box;
+    border: 0 solid;
+  }
+  html {
+    @apply scroll-smooth scroll-pt-7 motion-reduce:scroll-auto;
+  }
+  body {
+    @apply m-0 bg-page text-ink font-body text-[16px] leading-[1.6];
+  }
+  a {
+    @apply text-action underline-offset-[.2em] hover:decoration-2;
+  }
+  :focus-visible {
+    outline: 3px solid var(--blue);
+    outline-offset: 5px;
+  }
+  button,
+  input {
+    font: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  input {
+    @apply min-w-0 min-h-[46px] px-3.5 py-2.5 border border-solid border-line rounded-[9px] bg-surface text-ink;
+  }
+  input::placeholder {
+    @apply text-muted opacity-100;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply m-0 text-ink font-display;
+  }
+  h1 {
+    @apply text-[clamp(40px,5.6vw,76px)] leading-[1.08] tracking-[-.045em] font-bold text-balance;
+  }
+  h2 {
+    @apply text-[clamp(25px,3vw,32px)] leading-[1.2] tracking-[-.025em];
+  }
+  h3 {
+    @apply text-[18px] leading-[1.3] tracking-[-.015em];
+  }
+  p {
+    max-width: 70ch;
+  }
+  code {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+  }
+  dt {
+    @apply text-[13px] text-muted;
+  }
+  dd {
+    @apply m-0 text-[14px];
+    margin-block-start: 2px;
+  }
+  table {
+    @apply w-full border-collapse text-[13px];
+  }
+  th,
+  td {
+    @apply text-start px-3 py-3.5 align-top;
+    border-block-end: 1px solid var(--line);
+  }
+  th {
+    @apply text-muted font-semibold;
+  }
+  td code {
+    word-break: break-all;
+  }
+}
+
+@layer components {
+  .release-content {
+    overflow-wrap: anywhere;
+  }
+  .release-content p {
+    margin-block: 16px;
+  }
+  .release-content h1,
+  .release-content h2,
+  .release-content h3 {
+    font-size: 20px;
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+    margin-block: 20px 12px;
+  }
+  .release-content ul,
+  .release-content ol {
+    padding-inline-start: 22px;
+  }
+  .release-content li {
+    margin-block: 6px;
+  }
+  .release-content img {
+    max-width: 100%;
+    height: auto;
+  }
+  .release-content pre {
+    overflow-x: auto;
+  }
+}

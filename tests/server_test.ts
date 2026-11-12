@@ -298,10 +298,30 @@ test("browser pages list apps and inline releases", async () => {
         },
       ),
     );
-    const note = await noteResponse.json<{ type: string; tag: { name: string }[] }>();
+    const note = await noteResponse.json<{
+      type: string; tag: { name: string }[]; attributedTo: string;
+      attribution?: string;
+    }>();
     assertEquals(noteResponse.status, 200);
     assertEquals(note.type, "Note");
     assertEquals(note.tag[0].name, "#Flathub");
+    assertEquals(note.attributedTo, "https://example.org/apps/org.mozilla.firefox");
+    assertEquals(note.attribution, undefined);
+
+    const appOutboxResponse = await serve(
+      new Request("https://example.org/apps/org.mozilla.firefox/outbox", {
+        headers: { accept: "application/activity+json" },
+      }),
+    );
+    const appOutbox = await appOutboxResponse.json<{
+      orderedItems: { actor: string; object: typeof note }[];
+    }>();
+    assertEquals(appOutboxResponse.status, 200);
+    assertEquals(appOutbox.orderedItems.length, 2);
+    for (const activity of appOutbox.orderedItems) {
+      assertEquals(activity.object.attributedTo, activity.actor);
+      assertEquals(activity.object.attribution, undefined);
+    }
 
     const releaseViaPostsResponse = await serve(
       new Request("https://example.org/apps/org.mozilla.firefox/posts/abc123"),

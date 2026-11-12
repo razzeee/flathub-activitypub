@@ -100,7 +100,7 @@ export function noteDocument(
     "@context": "https://www.w3.org/ns/activitystreams",
     id: post.noteId,
     type: "Note",
-    attribution: actorId(origin, post.appId),
+    attributedTo: actorId(origin, post.appId),
     to: [ACTIVITYSTREAMS_PUBLIC],
     cc: [followersId(origin, post.appId)],
     published: post.publishedAt,
